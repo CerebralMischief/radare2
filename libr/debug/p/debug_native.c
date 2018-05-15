@@ -316,11 +316,8 @@ static bool tracelib(RDebug *dbg, const char *mode, PLIB_ITEM item) {
 		case 'u': needle = dbg->glob_unlibs; break;
 		}
 	}
-	//eprintf ("(%d) %sing library at %p (%s) %s\n", item->pid, mode,
-		//item->BaseOfDll, item->Path, item->Name);
-	r_cons_printf ("(%d) %sing library at %p (%s) %s\n", item->pid, mode,
+	eprintf ("(%d) %sing library at %p (%s) %s\n", item->pid, mode,
 		item->BaseOfDll, item->Path, item->Name);
-	r_cons_flush ();
 	if (needle && strlen (needle)) {
 		tmp = r_str_glob (item->Name, needle);
 	}
@@ -368,9 +365,7 @@ static RDebugReasonType r_debug_native_wait (RDebug *dbg, int pid) {
 				dbg->corebind.cmdf (core, "o-%d", fd);
 			}
 		} else {
-			//eprintf ("Loading unknown library.\n");
-			r_cons_printf ("Loading unknown library.\n");
-			r_cons_flush ();
+			eprintf ("Loading unknown library.\n");
 		}
 	} else if (reason == R_DEBUG_REASON_EXIT_LIB) {
 		RDebugInfo *r = r_debug_native_info (dbg, "");
@@ -380,19 +375,13 @@ static RDebugReasonType r_debug_native_wait (RDebug *dbg, int pid) {
 			}
 			r_debug_info_free (r);
 		} else {
-			//eprintf ("Unloading unknown library.\n");
-			r_cons_printf ("Unloading unknown library.\n");
-			r_cons_flush ();
-
+			eprintf ("Unloading unknown library.\n");
 		}
 	} else if (reason == R_DEBUG_REASON_NEW_TID) {
 		RDebugInfo *r = r_debug_native_info (dbg, "");
 		if (r && r->thread) {
 			PTHREAD_ITEM item = r->thread;
-			//eprintf ("(%d) Created thread %d (start @ %p)\n", item->pid, item->tid, item->lpStartAddress);
-			r_cons_printf ("(%d) Created thread %d (start @ %p)\n", item->pid, item->tid, item->lpStartAddress);
-			r_cons_flush ();
-
+			eprintf ("(%d) Created thread %d (start @ %p)\n", item->pid, item->tid, item->lpStartAddress);
 			r_debug_info_free (r);
 		}
 
@@ -400,10 +389,7 @@ static RDebugReasonType r_debug_native_wait (RDebug *dbg, int pid) {
 		RDebugInfo *r = r_debug_native_info (dbg, "");
 		if (r && r->thread) {
 			PTHREAD_ITEM item = r->thread;
-			//eprintf ("(%d) Finished thread %d Exit code %d\n", (ut32)item->pid, (ut32)item->tid, (ut32)item->dwExitCode);
-			r_cons_printf ("(%d) Finished thread %d Exit code %d\n", (ut32)item->pid, (ut32)item->tid, (ut32)item->dwExitCode);
-			r_cons_flush ();
-
+			eprintf ("(%d) Finished thread %d Exit code %d\n", (ut32)item->pid, (ut32)item->tid, (ut32)item->dwExitCode);
 			r_debug_info_free (r);
 		}
 	}
