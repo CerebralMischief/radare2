@@ -50,8 +50,6 @@ typedef struct r_print_t {
 	char *(*cb_color)(int idx, int last, bool bg);
 	int (*disasm)(void *p, ut64 addr);
 	void (*oprintf)(const char *str, ...);
-	char* (*get_bitfield)(void *user, const char *name, ut64 value);
-	char* (*get_enumname)(void *user, const char *name, ut64 value);
 	int interrupt;
 	int big_endian;
 	int width;
@@ -80,6 +78,7 @@ typedef struct r_print_t {
 	RPrintColorFor hasrefs;
 	RPrintCommentCallback get_comments;
 	Sdb *formats;
+	Sdb *sdb_types;
 	RCons *cons;
 	RConsBind consbind;
 	RNum *num;

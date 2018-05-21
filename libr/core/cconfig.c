@@ -1748,7 +1748,7 @@ static int cb_scrstrconv(void *user, void *data) {
 static int cb_graphformat(void *user, void *data) {
 	RConfigNode *node = (RConfigNode *) data;
 	if (!strcmp (node->value, "?")) {
-		r_cons_printf ("dot\ngml\ngmlfcn\n");
+		r_cons_printf ("png\njpg\npdf\nps\nsvg\njson\n");
 		return false;
 	}
 	return true;
@@ -2275,9 +2275,10 @@ static char *getViewerPath() {
 	return NULL;
 }
 
-R_API char* r_core_graph_cmd(char *r2_cmd) {
+R_API char* r_core_graph_cmd(RCore *core, char *r2_cmd) {
 	char *cmd = NULL;
 	char *xdotPath = r_file_path ("xdot");
+	const char *ext = r_config_get (core->config, "graph.extension");
 	if (r_file_exists (xdotPath)) {
 		cmd = r_str_newf ("%s > a.dot;!xdot a.dot", r2_cmd);
 	} else {
@@ -2286,7 +2287,7 @@ R_API char* r_core_graph_cmd(char *r2_cmd) {
 			R_FREE (dotPath);
 			char *viewer = getViewerPath();
 			if (viewer) {
-				cmd = r_str_newf ("%s > a.dot;!dot -Tgif -oa.gif a.dot;!%s a.gif", r2_cmd, viewer);
+				cmd = r_str_newf ("%s > a.dot;!dot -T%s -oa.%s a.dot;!%s a.%s", r2_cmd, ext, ext, viewer, ext);
 				free (viewer);
 			} else {
 				cmd = "?e cannot find a valid picture viewer";
@@ -2422,7 +2423,6 @@ R_API int r_core_config_init(RCore *core) {
 
 	/* asm */
 	//asm.os needs to be first, since other asm.* depend on it
-	SETICB ("asm.armimm", false,  &cb_asm_armimm, "Display # for immediates in ARM");
 	n = NODECB ("asm.os", R_SYS_OS, &cb_asmos);
 	SETDESC (n, "Select operating system (kernel)");
 	SETOPTIONS (n, "ios", "dos", "darwin", "linux", "freebsd", "openbsd", "netbsd", "windows", NULL);
@@ -2430,16 +2430,12 @@ R_API int r_core_config_init(RCore *core) {
 	SETCB ("asm.invhex", "false", &cb_asm_invhex, "Show invalid instructions as hexadecimal numbers");
 	SETPREF ("asm.meta", "true", "Display the code/data/format conversions in disasm");
 	SETPREF ("asm.bytes", "true", "Display the bytes of each instruction");
-	SETPREF ("asm.flagsinbytes", "false",  "Display flags inside the bytes space");
-	n = NODEICB ("asm.midflags", 2, &cb_midflags);
-	SETDESC (n, "Realign disassembly if there is a flag in the middle of an instruction");
 	SETPREF ("asm.midcursor", "false", "Cursor in visual disasm mode breaks the instruction");
-	SETOPTIONS (n, "0 = do not show flag", "1 = show without realign", "2 = realign at middle flag",
-		"3 = realign at middle flag if sym.*", NULL);
 	SETPREF ("asm.cmt.flgrefs", "true", "Show comment flags associated to branch reference");
 	SETPREF ("asm.cmt.right", "true", "Show comments at right of disassembly if they fit in screen");
 	SETI ("asm.cmt.col", 71, "Column to align comments");
 	SETICB ("asm.pcalign", 0, &cb_asm_pcalign, "Only recognize as valid instructions aligned to this value");
+	// maybe rename to asm.cmt.calls
 	SETPREF ("asm.calls", "true", "Show callee function related info as comments in disasm");
 	SETPREF ("asm.bbline", "false", "Show empty line after every basic block");
 	SETPREF ("asm.comments", "true", "Show comments in disassembly view");
@@ -2448,9 +2444,9 @@ R_API int r_core_config_init(RCore *core) {
 	SETPREF ("asm.leahints", "false", "Show LEA hints [numbers] in disasm");
 	SETPREF ("asm.slow", "true", "Perform slow analysis operations in disasm");
 	SETPREF ("asm.decode", "false", "Use code analysis as a disassembler");
-	SETPREF ("asm.flgoff", "false", "Show offset in flags");
-	SETPREF ("asm.immstr", "false", "Show immediates values as strings");
-	SETPREF ("asm.immtrim", "false", "Remove all offsets and constants from disassembly");
+	SETICB ("asm.imm.arm", false,  &cb_asm_armimm, "Display # for immediates in ARM");
+	SETPREF ("asm.imm.str", "false", "Show immediates values as strings");
+	SETPREF ("asm.imm.trim", "false", "Remove all offsets and constants from disassembly");
 	SETPREF ("asm.indent", "false", "Indent disassembly based on reflines depth");
 	SETI ("asm.indentspace", 2, "How many spaces to indent the code");
 	SETPREF ("asm.dwarf", "false", "Show dwarf comment at disassembly");
@@ -2471,16 +2467,22 @@ R_API int r_core_config_init(RCore *core) {
 	SETOPTIONS (n, "d", "c", "s", "f", "m", "h", "C", "r", NULL);
 	SETPREF ("asm.filter", "true", "Replace numeric values by flags (e.g. 0x4003e0 -> sym.imp.printf)");
 	SETPREF ("asm.strip", "", "strip all instructions given comma separated types");
-	SETPREF ("asm.fcnlines", "true", "Show function boundary lines");
+	SETPREF ("asm.lines.fcn", "true", "Show function boundary lines");
 	SETPREF ("asm.flags", "true", "Show flags");
+	SETPREF ("asm.flags.offset", "false", "Show offset in flags");
+	SETPREF ("asm.flags.inbytes", "false",  "Display flags inside the bytes space");
+	n = NODEICB ("asm.flags.middle", 2, &cb_midflags);
+	SETOPTIONS (n, "0 = do not show flag", "1 = show without realign", "2 = realign at middle flag",
+		"3 = realign at middle flag if sym.*", NULL);
+	SETDESC (n, "Realign disassembly if there is a flag in the middle of an instruction");
 	SETPREF ("asm.lbytes", "true", "Align disasm bytes to left");
 	SETPREF ("asm.lines", "true", "Show ASCII-art lines at disassembly");
 	SETPREF ("asm.lines.call", "false", "Enable call lines");
 	SETPREF ("asm.lines.ret", "false", "Show separator lines after ret");
-	SETPREF ("asm.linesout", "true", "Show out of block lines");
-	SETPREF ("asm.linesright", "false", "Show lines before opcode instead of offset");
-	SETPREF ("asm.lineswide", "false", "Put a space between lines");
-	SETICB ("asm.lineswidth", 7, &cb_asmlineswidth, "Number of columns for program flow arrows");
+	SETPREF ("asm.lines.out", "true", "Show out of block lines");
+	SETPREF ("asm.lines.right", "false", "Show lines before opcode instead of offset");
+	SETPREF ("asm.lines.wide", "false", "Put a space between lines");
+	SETICB ("asm.lines.width", 7, &cb_asmlineswidth, "Number of columns for program flow arrows");
 	SETICB ("asm.var.submin", 0x100, &cb_asmvarsubmin, "Minimum value to substitute in instructions (asm.var.sub)");
 	SETPREF ("asm.middle", "false", "Allow disassembling jumps in the middle of an instruction");
 	SETPREF ("asm.noisy", "true", "Show comments considered noisy but possibly useful");
@@ -2497,8 +2499,8 @@ R_API int r_core_config_init(RCore *core) {
 	SETPREF ("asm.cyclespace", "false", "Indent instructions depending on CPU-cycles");
 	SETPREF ("asm.cycles", "false", "Show CPU-cycles taken by instruction at disassembly");
 	SETI ("asm.tabs", 0, "Use tabs in disassembly");
-	SETPREF ("asm.tabsonce", "false", "Only tabulate the opcode, not the arguments");
-	SETI ("asm.tabsoff", 0, "tabulate spaces after the offset");
+	SETPREF ("asm.tabs.once", "false", "Only tabulate the opcode, not the arguments");
+	SETI ("asm.tabs.off", 0, "tabulate spaces after the offset");
 	SETPREF ("asm.trace", "false", "Show execution traces for each opcode");
 	SETPREF ("asm.tracespace", "false", "Indent disassembly with trace.count information");
 	SETPREF ("asm.ucase", "false", "Use uppercase syntax at disassembly");
@@ -2542,7 +2544,6 @@ R_API int r_core_config_init(RCore *core) {
 	SETICB ("asm.bits", 32, &cb_asmbits, "Word size in bits at assembler");
 #endif
 	SETPREF ("asm.functions", "true", "Show functions in disassembly");
-	SETPREF ("asm.fcncalls", "true", "Show functions calls");
 	SETPREF ("asm.xrefs", "true", "Show xrefs in disassembly");
 	SETPREF ("asm.demangle", "true", "Show demangled symbols in disasm");
 	SETPREF ("asm.describe", "false", "Show opcode description");
@@ -2716,11 +2717,8 @@ R_API int r_core_config_init(RCore *core) {
 	SETCB ("dbg.trace", "false", &cb_trace, "Trace program execution (see asm.trace)");
 	SETICB ("dbg.trace.tag", 0, &cb_tracetag, "Trace tag");
 
-	/* cmd */
-	char *cmd = r_core_graph_cmd ("ag $$");
-	r_config_set (cfg, "cmd.graph", cmd);
-	free (cmd);
 
+	/* cmd */
 	r_config_desc (cfg, "cmd.graph", "Command executed by 'agv' command to view graphs");
 	SETPREF ("cmd.xterm", "xterm -bg black -fg gray -e", "xterm command to spawn with V@");
 	SETICB ("cmd.depth", 10, &cb_cmddepth, "Maximum command depth");
@@ -2818,6 +2816,7 @@ R_API int r_core_config_init(RCore *core) {
 	/* graph */
 	SETPREF ("graph.comments", "true", "Show disasm comments in graph");
 	SETPREF ("graph.cmtright", "false", "Show comments at right");
+	SETCB ("graph.extension", "gif", &cb_graphformat, "Graph extension when using 'w' format (png, jpg, pdf, ps, svg, json)");
 	SETPREF ("graph.refs", "false", "Graph references in callgraphs (.agc*;aggi)");
 	SETI ("graph.edges", 2, "0=no edges, 1=simple edges, 2=avoid collisions");
 	SETI ("graph.layout", 0, "Graph layout (0=vertical, 1=horizontal)");
@@ -2836,6 +2835,10 @@ R_API int r_core_config_init(RCore *core) {
 	SETPREF ("graph.gv.graph", "", "Graphviz global style attributes. (bgcolor=white)");
 	SETPREF ("graph.gv.current", "false", "Highlight the current node in graphviz graph.");
 	SETPREF ("graph.nodejmps", "true", "Enables shortcuts for every node.");
+	char *cmd = r_core_graph_cmd (core, "ag $$");
+	r_config_set (cfg, "cmd.graph", cmd);
+	free (cmd);
+
 	/* hud */
 	SETPREF ("hud.path", "", "Set a custom path for the HUD file");
 

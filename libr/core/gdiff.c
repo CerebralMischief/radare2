@@ -11,6 +11,17 @@ R_API int r_core_gdiff_fcn(RCore *c, ut64 addr, ut64 addr2) {
 	RList *la, *lb;
 	RAnalFunction *fa = r_anal_get_fcn_at (c->anal, addr, 0);
 	RAnalFunction *fb = r_anal_get_fcn_at (c->anal, addr2, 0);
+	if (!fa || !fb) {
+		return false;
+	}
+	RAnalBlock *bb;
+	RListIter *iter;
+	r_list_foreach (fa->bbs, iter, bb) {
+		r_anal_diff_fingerprint_bb (c->anal, bb);
+	}
+	r_list_foreach (fb->bbs, iter, bb) {
+		r_anal_diff_fingerprint_bb (c->anal, bb);
+	}
 	la = r_list_new ();
 	r_list_append (la, fa);
 	lb = r_list_new ();
@@ -18,7 +29,7 @@ R_API int r_core_gdiff_fcn(RCore *c, ut64 addr, ut64 addr2) {
 	r_anal_diff_fcn (c->anal, la, lb);
 	r_list_free (la);
 	r_list_free (lb);
-	return false;
+	return true;
 }
 
 /* Fingerprint functions and blocks, then diff. */

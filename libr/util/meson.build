@@ -44,6 +44,7 @@ files = [
   'r_asn1.c',
   'r_pkcs7.c',
   'r_x509.c',
+  'r_ctypes.c',
   'randomart.c',
   'range.c',
   'rbtree.c',
@@ -84,9 +85,9 @@ files = [
 r_util = library('r_util', files,
   include_directories: [
     platform_inc,
-    include_directories([
+    include_directories(
       '../../shlr/zip/include'
-    ])
+    )
   ],
   dependencies: [ldl, mth, pth, utl],
   link_with: [libr_shlr],

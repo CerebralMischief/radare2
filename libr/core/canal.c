@@ -335,7 +335,7 @@ static char *anal_fcn_autoname(RCore *core, RAnalFunction *fcn, int dump) {
 	char *do_call = NULL;
 	RAnalRef *ref;
 	RListIter *iter;
-	RList *refs = r_anal_fcn_get_refs_sorted (core->anal, fcn);
+	RList *refs = r_anal_fcn_get_refs (core->anal, fcn);
 	r_list_foreach (refs, iter, ref) {
 		RFlagItem *f = r_flag_get_i (core->flags, ref->addr);
 		if (f) {
@@ -1240,14 +1240,14 @@ static int core_anal_graph_nodes(RCore *core, RAnalFunction *fcn, int opts) {
 					//	fcn->addr, bbi->addr, difftype, str, fcn->name, bbi->addr);
 					RConfigHold *hc = r_config_hold_new (core->config);
 					r_config_save_num (hc, "scr.color", "scr.utf8", "asm.offset", "asm.lines",
-							"asm.cmt.right", "asm.fcnlines", "asm.bytes", NULL);
+							"asm.cmt.right", "asm.lines.fcn", "asm.bytes", NULL);
 					RDiff *d = r_diff_new ();
 					r_config_set_i (core->config, "scr.color", 0);
 					r_config_set_i (core->config, "scr.utf8", 0);
 					r_config_set_i (core->config, "asm.offset", 0);
 					r_config_set_i (core->config, "asm.lines", 0);
 					r_config_set_i (core->config, "asm.cmt.right", 0);
-					r_config_set_i (core->config, "asm.fcnlines", 0);
+					r_config_set_i (core->config, "asm.lines.fcn", 0);
 					r_config_set_i (core->config, "asm.bytes", 0);
 
 					if (bbi->diff && bbi->diff->type != R_ANAL_DIFF_TYPE_MATCH && core->c2) {
@@ -1592,7 +1592,7 @@ R_API int r_core_print_bb_custom(RCore *core, RAnalFunction *fcn) {
 
 	RConfigHold *hc = r_config_hold_new (core->config);
 	r_config_save_num (hc, "scr.color", "scr.utf8", "asm.marks", "asm.offset", "asm.lines",
-	  "asm.cmt.right", "asm.cmt.col", "asm.fcnlines", "asm.bytes", NULL);
+	  "asm.cmt.right", "asm.cmt.col", "asm.lines.fcn", "asm.bytes", NULL);
 	/*r_config_set_i (core->config, "scr.color", 0);*/
 	r_config_set_i (core->config, "scr.utf8", 0);
 	r_config_set_i (core->config, "asm.marks", 0);
@@ -1600,7 +1600,7 @@ R_API int r_core_print_bb_custom(RCore *core, RAnalFunction *fcn) {
 	r_config_set_i (core->config, "asm.lines", 0);
 	r_config_set_i (core->config, "asm.cmt.right", 0);
 	r_config_set_i (core->config, "asm.cmt.col", 0);
-	r_config_set_i (core->config, "asm.fcnlines", 0);
+	r_config_set_i (core->config, "asm.lines.fcn", 0);
 	r_config_set_i (core->config, "asm.bytes", 0);
 
 	r_list_foreach (fcn->bbs, iter, bb) {
@@ -1708,14 +1708,44 @@ R_API int r_core_print_bb_gml(RCore *core, RAnalFunction *fcn) {
 	return true;
 }
 
+R_API void r_core_anal_datarefs(RCore *core, ut64 addr) {
+	RAnalFunction *fcn = r_anal_get_fcn_in (core->anal, addr, -1);
+	if (fcn) {
+		bool found = false;
+		const char *me = fcn->name;
+		RListIter *iter;
+		RAnalRef *ref;
+		RList *refs = r_anal_fcn_get_refs (core->anal, fcn);
+		r_list_foreach (refs, iter, ref) {
+			RBinObject *obj = r_bin_cur_object (core->bin);
+			RBinSection *binsec = r_bin_get_section_at (obj, ref->addr, true);
+			if (binsec->is_data) {
+				if (!found) {
+					r_cons_printf ("agn %s\n", me);
+					found = true;
+				}
+				RFlagItem *item = r_flag_get_i (core->flags, ref->addr);
+				const char *dst = item? item->name: sdb_fmt ("0x%08"PFMT64x, ref->addr);
+				r_cons_printf ("agn %s\n", dst);
+				r_cons_printf ("age %s %s\n", me, dst);
+			}
+		}
+		if (!found) {
+			eprintf ("No data refs in this function.\n");
+		}
+		r_list_free (refs);
+	} else {
+		eprintf ("Not in a function. Use 'df' to define it.\n");
+	}
+}
+
 R_API void r_core_anal_coderefs(RCore *core, ut64 addr) {
 	RAnalFunction *fcn = r_anal_get_fcn_in (core->anal, addr, -1);
 	if (fcn) {
 		const char *me = fcn->name;
 		RListIter *iter;
 		RAnalRef *ref;
-		RList *refs = r_anal_fcn_get_refs_sorted (core->anal, fcn);
-		r_cons_printf ("ag-\n");
+		RList *refs = r_anal_fcn_get_refs (core->anal, fcn);
 		r_cons_printf ("agn %s\n", me);
 		r_list_foreach (refs, iter, ref) {
 			RFlagItem *item = r_flag_get_i (core->flags, ref->addr);
@@ -1729,11 +1759,31 @@ R_API void r_core_anal_coderefs(RCore *core, ut64 addr) {
 	}
 }
 
+R_API void r_core_anal_importxrefs(RCore *core) {
+	RBinInfo *info = r_bin_get_info (core->bin);
+	RBinObject *obj = r_bin_cur_object (core->bin);
+	bool lit = info ? info->has_lit: false;
+	int va = core->io->va || core->io->debug;
+
+	RListIter *iter;
+	RBinImport *imp;
+	if (!obj) {
+		return;
+	}
+	r_list_foreach (obj->imports, iter, imp) {
+		ut64 addr = lit ? r_core_bin_impaddr (core->bin, va, imp->name): 0;
+		if (addr) {
+			r_core_anal_codexrefs (core, addr);
+		} else {
+			r_cons_printf ("agn %s\n", imp->name);
+		}
+	}
+}
+
 R_API void r_core_anal_codexrefs(RCore *core, ut64 addr) {
 	RFlagItem *f = r_flag_get_at (core->flags, addr, false);
 	char *me = (f && f->offset == addr)
 		? r_str_new (f->name) : r_str_newf ("0x%"PFMT64x, addr);
-	r_cons_printf ("ag-\n");
 	r_cons_printf ("agn %s\n", me);
 	RListIter *iter;
 	RAnalRef *ref;
@@ -1789,7 +1839,7 @@ repeat:
 		if (addr != UT64_MAX && addr != fcni->addr) {
 			continue;
 		}
-		RList *refs = r_anal_fcn_get_refs_sorted (core->anal, fcni);
+		RList *refs = r_anal_fcn_get_refs (core->anal, fcni);
 		if (!fmt) {
 			r_cons_printf ("0x%08"PFMT64x"\n", fcni->addr);
 		} else if (fmt == R_GRAPH_FORMAT_GML || fmt == R_GRAPH_FORMAT_GMLFCN) {
@@ -1899,7 +1949,7 @@ repeat:
 				}
 			} else if (fmt == R_GRAPH_FORMAT_JSON) {
 				if (fr) {
-					RList *refs1 = r_anal_fcn_get_refs_sorted (core->anal, fr);
+					RList *refs1 = r_anal_fcn_get_refs (core->anal, fr);
 					if (!hideempty || (hideempty && r_list_length (refs1) > 0)) {
 						if (usenames) {
 							r_cons_printf ("%s\"%s\"", first2?",":"", fr->name);
@@ -2190,7 +2240,7 @@ static int fcn_print_json(RCore *core, RAnalFunction *fcn) {
 				fcn->diff->type == R_ANAL_DIFF_TYPE_UNMATCH?"UNMATCH":"NEW");
 	}
 	int outdegree = 0;
-	refs = r_anal_fcn_get_refs_sorted (core->anal, fcn);
+	refs = r_anal_fcn_get_refs (core->anal, fcn);
 	if (!r_list_empty (refs)) {
 		r_cons_printf (",\"callrefs\":[");
 		r_list_foreach (refs, iter, refi) {
@@ -2222,7 +2272,7 @@ static int fcn_print_json(RCore *core, RAnalFunction *fcn) {
 	r_list_free (refs);
 
 	int indegree = 0;
-	xrefs = r_anal_fcn_get_xrefs_sorted (core->anal, fcn);
+	xrefs = r_anal_fcn_get_xrefs (core->anal, fcn);
 	if (!r_list_empty (xrefs)) {
 		first = true;
 		r_cons_printf (",\"codexrefs\":[");
@@ -2326,7 +2376,7 @@ static int fcn_print_detail(RCore *core, RAnalFunction *fcn) {
 	/* Show references */
 	RListIter *refiter;
 	RAnalRef *refi;
-	RList *refs = r_anal_fcn_get_refs_sorted (core->anal, fcn);
+	RList *refs = r_anal_fcn_get_refs (core->anal, fcn);
 	r_list_foreach (refs, refiter, refi) {
 		switch (refi->type) {
 		case R_ANAL_REF_TYPE_CALL:
@@ -2380,7 +2430,7 @@ static int fcn_print_legacy(RCore *core, RAnalFunction *fcn) {
 	r_cons_printf ("\nend-bbs: %d", ebbs);
 	r_cons_printf ("\ncall-refs: ");
 	int outdegree = 0;
-	refs = r_anal_fcn_get_refs_sorted (core->anal, fcn);
+	refs = r_anal_fcn_get_refs (core->anal, fcn);
 	r_list_foreach (refs, iter, refi) {
 		if (refi->type == R_ANAL_REF_TYPE_CALL) {
 			outdegree++;
@@ -2400,7 +2450,7 @@ static int fcn_print_legacy(RCore *core, RAnalFunction *fcn) {
 
 	int indegree = 0;
 	r_cons_printf ("\ncode-xrefs: ");
-	xrefs = r_anal_fcn_get_xrefs_sorted (core->anal, fcn);
+	xrefs = r_anal_fcn_get_xrefs (core->anal, fcn);
 	r_list_foreach (xrefs, iter, refi) {
 		if (refi->type == R_ANAL_REF_TYPE_CODE || refi->type == R_ANAL_REF_TYPE_CALL) {
 			indegree++;
@@ -3209,33 +3259,6 @@ R_API int r_core_anal_all(RCore *core) {
 	}
 	r_cons_break_pop ();
 	return true;
-}
-
-R_API void r_core_anal_setup_enviroment (RCore *core) {
-	char key[128], *str = NULL;
-	RListIter *iter;
-	RConfigNode *kv;
-	r_list_foreach (core->config->nodes, iter, kv) {
-		int kvlen = strlen (kv->name);
-		if (kvlen >= sizeof (key)) {
-			return;
-		}
-		strcpy (key, kv->name);
-		r_str_case (key, 1);
-		r_str_replace_char (key, '.', '_');
-#define RANAL_PARSE_STRING_ONLY 1
-#if RANAL_PARSE_STRING_ONLY
-		r_anal_type_define (core->anal, key, kv->value);
-#else
-		if (kv->flags & CN_INT) {
-			r_anal_type_define_i (core->anal, key, kv->i_value);
-		} else if (kv->flags & CN_BOOL) {
-			r_anal_type_define (core->anal, key, kv->i_value? "": NULL);
-		} else r_anal_type_define (core->anal, key, kv->value);
-#endif
-	}
-	r_anal_type_header (core->anal, str);
-	free (str);
 }
 
 R_API int r_core_anal_data (RCore *core, ut64 addr, int count, int depth, int wordsize) {

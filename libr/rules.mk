@@ -11,13 +11,7 @@ LINK+=-g
 endif
 
 LIBR:=$(abspath $(dir $(lastword $(MAKEFILE_LIST))))
-ifeq (${LIBR},)
-ifeq ($(R2DIR),)
-$(error R2DIRis not defined)
-else
-LIBR:=$(R2DIR)/libr
-endif
-endif
+# /libr
 
 ALL?=
 CFLAGS+=-I$(LIBR)
@@ -27,8 +21,15 @@ CFLAGS+=-fvisibility=hidden
 LDFLAGS+=-fvisibility=hidden
 LINK+=-fvisibility=hidden
 
+# for executables (DUP)
 LINK+=$(addprefix -L../,$(subst r_,,$(BINDEPS)))
 LINK+=$(addprefix -l,$(BINDEPS))
+
+# for libraries (DUP)
+# implemented in libr/config.mk.tail
+#LDFLAGS+=$(addprefix -L../,$(subst r_,,$(DEPS)))
+#LDFLAGS+=$(addprefix -l,$(DEPS))
+
 SRC=$(subst .o,.c,$(OBJ))
 
 BEXE=$(BIN)$(EXT_EXE)

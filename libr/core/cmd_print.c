@@ -1021,14 +1021,14 @@ static void cmd_print_format(RCore *core, const char *_input, const ut8* block, 
 					*eq++ = 0;
 					mode = R_PRINT_MUSTSET;
 					r_print_format (core->print, core->offset,
-						block, core->blocksize, name, mode, eq, dot);
+						core->block, core->blocksize, name, mode, eq, dot);
 				} else {
 					r_print_format (core->print, core->offset,
-						block, core->blocksize, name, mode, NULL, dot);
+						core->block, core->blocksize, name, mode, NULL, dot);
 				}
 			} else {
 				r_print_format (core->print, core->offset,
-					block, core->blocksize, name, mode, NULL, NULL);
+					core->block, core->blocksize, name, mode, NULL, NULL);
 			}
 			free (name);
 		}
@@ -3096,7 +3096,7 @@ static void _disasm_recursive(RCore *core, ut64 addr, char type_print) {
 	bool show_flags = r_config_get_i (core->config, "asm.flags");
 	bool show_bytes = r_config_get_i (core->config, "asm.bytes");
 	bool show_offset = r_config_get_i (core->config, "asm.offset");
-	bool show_imtrim = r_config_get_i (core->config, "asm.immtrim");
+	bool show_imtrim = r_config_get_i (core->config, "asm.imm.trim");
 	Sdb *db = sdb_new0 ();
 	RAsmOp asmop = {0};
 	RAnalOp aop = {0};

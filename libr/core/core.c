@@ -327,9 +327,9 @@ static ut64 getref (RCore *core, int n, char t, int type) {
 	}
 #if FCN_OLD
 	if (t == 'r') {
-		list = r_anal_fcn_get_refs_sorted (core->anal, fcn);
+		list = r_anal_fcn_get_refs (core->anal, fcn);
 	} else {
-		list = r_anal_fcn_get_xrefs_sorted (core->anal, fcn);
+		list = r_anal_fcn_get_xrefs (core->anal, fcn);
 	}
 	r_list_foreach (list, iter, r) {
 		if (r->type == type) {
@@ -1209,6 +1209,7 @@ static int autocomplete(RLine *line) {
 			line->completion.argc = i;
 			line->completion.argv = tmp_argv;
 		} else if (!strncmp (line->buffer.data, "s ", 2)
+		|| !strncmp (line->buffer.data, "s+ ", 3)
 		|| !strncmp (line->buffer.data, "b ", 2)
 		|| !strncmp (line->buffer.data, "f ", 2)
 		|| !strncmp (line->buffer.data, "? ", 2)
@@ -1454,55 +1455,6 @@ static void update_sdb(RCore *core) {
 		core->dbg->sgnls->refs++;
 		sdb_ns_set (d, "signals", core->dbg->sgnls);
 	}
-}
-
-// dupped in cmd_type.c
-static char *getenumname(void *_core, const char *name, ut64 val) {
-	const char *isenum;
-	RCore *core = (RCore*)_core;
-
-	isenum = sdb_const_get (core->anal->sdb_types, name, 0);
-	if (isenum && !strncmp (isenum, "enum", 4)) {
-		const char *q = sdb_fmt ("%s.0x%x", name, val);
-		return sdb_get (core->anal->sdb_types, q, 0);
-	} else {
-		eprintf ("This is not an enum (%s)\n", name);
-	}
-	return NULL;
-}
-
-// TODO: dupped in cmd_type.c
-static char *getbitfield(void *_core, const char *name, ut64 val) {
-	const char *isenum, *q, *res;
-	RCore *core = (RCore*)_core;
-	char *ret = NULL;
-	int i;
-
-	isenum = sdb_const_get (core->anal->sdb_types, name, 0);
-	if (isenum && !strcmp (isenum, "enum")) {
-		int isFirst = true;
-		ret = r_str_appendf (ret, "0x%08"PFMT64x" : ", val);
-		for (i = 0; i < 32; i++) {
-			if (!(val & (1 << i))) {
-				continue;
-			}
-			q = sdb_fmt ("%s.0x%x", name, (1<<i));
-			res = sdb_const_get (core->anal->sdb_types, q, 0);
-			if (isFirst) {
-				isFirst = false;
-			} else {
-				ret = r_str_append (ret, " | ");
-			}
-			if (res) {
-				ret = r_str_append (ret, res);
-			} else {
-				ret = r_str_appendf (ret, "0x%x", (1<<i));
-			}
-		}
-	} else {
-		eprintf ("This is not an enum\n");
-	}
-	return ret;
 }
 
 #define MINLEN 1
@@ -1769,8 +1721,6 @@ R_API bool r_core_init(RCore *core) {
 	core->print = r_print_new ();
 	core->print->user = core;
 	core->print->num = core->num;
-	core->print->get_enumname = getenumname;
-	core->print->get_bitfield = getbitfield;
 	core->print->offname = r_core_print_offname;
 	core->print->cb_printf = r_cons_printf;
 	core->print->cb_color = r_cons_rainbow_get;
@@ -1782,7 +1732,7 @@ R_API bool r_core_init(RCore *core) {
 	core->print->use_comments = false;
 	core->rtr_n = 0;
 	core->blocksize_max = R_CORE_BLOCKSIZE_MAX;
-	core->tasks = r_list_new ();
+	core->tasks = r_list_newf (free);
 	core->watchers = r_list_new ();
 	core->watchers->free = (RListFree)r_core_cmpwatch_free;
 	core->scriptstack = r_list_new ();
@@ -1849,6 +1799,7 @@ R_API bool r_core_init(RCore *core) {
 	core->anal->cb.on_fcn_new = on_fcn_new;
 	core->anal->cb.on_fcn_delete = on_fcn_delete;
 	core->anal->cb.on_fcn_rename = on_fcn_rename;
+	core->print->sdb_types = core->anal->sdb_types;
 	core->assembler->syscall = r_syscall_ref (core->anal->syscall); // BIND syscall anal/asm
 	r_anal_set_user_ptr (core->anal, core);
 	core->anal->cb_printf = (void *) r_cons_printf;

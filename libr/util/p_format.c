@@ -1110,9 +1110,7 @@ static void r_print_format_bitfield(const RPrint* p, ut64 seeki, char* fmtname,
 	if (MUSTSEE && !SEEVALUE) {
 		p->cb_printf ("0x%08"PFMT64x" = ", seeki);
 	}
-	if (p->get_bitfield) {
-		bitfield = p->get_bitfield (p->user, fmtname, addr);
-	}
+	bitfield = r_type_enum_getbitfield (p->sdb_types, fmtname, addr);
 	if (bitfield && *bitfield) {
 		if (MUSTSEEJSON) p->cb_printf ("\"%s\"}", bitfield);
 		else if (MUSTSEE) p->cb_printf (" %s (bitfield) = %s\n", fieldname, bitfield);
@@ -1135,9 +1133,7 @@ static void r_print_format_enum (const RPrint* p, ut64 seeki, char* fmtname,
 	if (MUSTSEE && !SEEVALUE) {
 		p->cb_printf ("0x%08"PFMT64x" = ", seeki);
 	}
-	if (p->get_enumname) {
-		enumvalue = p->get_enumname (p->user, fmtname, addr);
-	}
+	enumvalue = r_type_enum_member (p->sdb_types, fmtname, NULL, addr);
 	if (enumvalue && *enumvalue) {
 		if (mode & R_PRINT_DOT) {
 			p->cb_printf ("%s.%s", fmtname, enumvalue);
@@ -1316,7 +1312,7 @@ int r_print_format_struct_size(const char *f, RPrint *p, int mode, int n) {
 		}
 	}
 
-	r_str_word_set0_stack (args);
+	int words = r_str_word_set0_stack (args);
 	fmt_len = strlen (fmt);
 	for (; i < fmt_len; i++) {
 		if (fmt[i] == '[') {
@@ -1388,10 +1384,19 @@ int r_print_format_struct_size(const char *f, RPrint *p, int mode, int n) {
 			break;
 		case '?':
 			{
+			const char *wordAtIndex = NULL;
 			const char *format = NULL;
 			char *endname = NULL, *structname = NULL;
 			char tmp = 0;
-			structname = strdup (r_str_word_get0 (args, idx));
+			if (words < idx) {
+				eprintf ("Index out of bounds\n");
+			} else {
+				wordAtIndex = r_str_word_get0 (args, idx);
+			}
+			if (!wordAtIndex) {
+				break;
+			}
+			structname = strdup (wordAtIndex);
 			if (*structname == '(') {
 				endname = (char*)r_str_rchr (structname, NULL, ')');
 			} else {
@@ -1410,6 +1415,9 @@ int r_print_format_struct_size(const char *f, RPrint *p, int mode, int n) {
 				}
 			} else {
 				format = sdb_get (p->formats, structname + 1, NULL);
+				if (!format) { // Fetch format from types db
+					format = r_type_format (p->sdb_types, structname + 1);
+				}
 			}
 			if (!format) {
 				eprintf ("Cannot find format for struct `%s'\n", structname + 1);
@@ -1513,6 +1521,9 @@ static int r_print_format_struct(RPrint* p, ut64 seek, const ut8* b, int len, co
 		fmt = name;
 	} else {
 		fmt = sdb_get (p->formats, name, NULL);
+		if (!fmt) { // Fetch struct info from types DB
+			fmt = r_type_format (p->sdb_types, name);
+		}
 	}
 	if (!fmt || !*fmt) {
 		eprintf ("Undefined struct '%s'.\n", name);
@@ -1559,7 +1570,6 @@ R_API int r_print_format(RPrint *p, ut64 seek, const ut8* b, const int len,
 	const char *argend;
 	int viewflags = 0;
 	char *oarg = NULL;
-	ut8 *buf;
 
 	/* Load format from name into fmt */
 	if (!formatname) {
@@ -1579,7 +1589,7 @@ R_API int r_print_format(RPrint *p, ut64 seek, const ut8* b, const int len,
 		return 0;
 	}
 	// len+2 to save space for the null termination in wide strings
-	buf = calloc (1, len + 2);
+	ut8 *buf = calloc (1, len + 2);
 	if (!buf) {
 		return 0;
 	}
@@ -1742,13 +1752,14 @@ R_API int r_print_format(RPrint *p, ut64 seek, const ut8* b, const int len,
 			if (mode & R_PRINT_MUSTSEE && otimes > 1) {
 				p->cb_printf ("  ");
 			}
-
 			if (idx < nargs && tmp != 'e' && isptr == 0) {
 				char *dot = NULL, *bracket = NULL;
-				if (field)
+				if (field) {
 					dot = strchr (field, '.');
-				if (dot)
+				}
+				if (dot) {
 					*dot = '\0';
+				}
 				free (oarg);
 				oarg = fieldname = strdup (r_str_word_get0 (args, idx));
 				if (ISSTRUCT || tmp=='E' || tmp=='B' || tmp=='r') {
@@ -2126,7 +2137,7 @@ R_API int r_print_format(RPrint *p, ut64 seek, const ut8* b, const int len,
 					slide += NESTEDSTRUCT;
 					if (size == -1) {
 						s = r_print_format_struct (p, seeki,
-									buf+i, len-i, fmtname, slide,
+									buf + i, len - i, fmtname, slide,
 									mode, setval, nxtfield, anon);
 						i += (isptr) ? (p->bits / 8) : s;
 						if (MUSTSEEJSON) {

@@ -39,21 +39,22 @@ all:
 ifeq ($(BUILD_MERGED),1)
 
 ifeq ($(OSTYPE),darwin)
-MLFLAGS+=-install_name @rpath/libr2.dylib $(LDFLAGS)
+MLFLAGS+=-install_name @rpath/libr2.dylib
 endif
 ifeq ($(OSTYPE),ios)
-MLFLAGS+=-install_name @rpath/libr2.dylib $(LDFLAGS)
+MLFLAGS+=-install_name @rpath/libr2.dylib
 endif
 # XXX version-script only works with shlib as output
 #ifeq ($(OSTYPE),linux)
 #PLFLAGS+=--version-script ./ld.script
 #endif
+# from env: ALFLAGS+=$(ALFLAGS)
 
 .libr: $(wildcard */libr_*.${EXT_AR}) ../shlr/libr_shlr.${EXT_AR}
 	rm -rf .libr
 	mkdir .libr
 	for LIB in $^ ; do \
-		${PARTIALLD} $(PLFLAGS) -o .libr/$$(basename $${LIB} .a).o $${LIB} ; \
+		${PARTIALLD} $(ALFLAGS) $(MLFLAGS) $(PLFLAGS) -o .libr/$$(basename $${LIB} .a).o $${LIB} ; \
 	done
 ifeq ($(OSTYPE),linux)
 	for LIB in .libr/* ; do $(OBJCOPY) --localize-hidden $$LIB ; done
@@ -62,6 +63,9 @@ ifeq ($(OSTYPE),gnulinux)
 	for LIB in .libr/* ; do $(OBJCOPY) --localize-hidden $$LIB ; done
 endif
 ifeq ($(OSTYPE),android)
+	for LIB in .libr/* ; do $(OBJCOPY) --localize-hidden $$LIB ; done
+endif
+ifeq ($(OSTYPE),bsd)
 	for LIB in .libr/* ; do $(OBJCOPY) --localize-hidden $$LIB ; done
 endif
 
@@ -93,10 +97,10 @@ else
 # BUILD_MERGED=0
 
 libr.${EXT_SO}:
-	# do nothing
+	$(MAKE) libr.${EXT_SO} BUILD_MERGED=1
 
 libr.${EXT_AR}:
-	# do nothing
+	$(MAKE) libr.${EXT_AR} BUILD_MERGED=1
 endif
 
 ../shlr/libr_shlr.${EXT_AR}:
@@ -162,7 +166,7 @@ install: install-includes install-pkgconfig
 	# TODO :Use INSTALL_DATA_DIR instead of mkdir
 	# libraries
 	@${INSTALL_DIR} "${DESTDIR}${LIBDIR}"
-	@$(foreach lib,$(shell find * -type f -iname "*.${EXT_SO}" | grep -v 'libr\.' | grep -v '(lib|parse)/t/' | grep lib | grep -v /bin/ | grep -v /p/), \
+	@$(foreach lib,$(shell find * -type f -iname "*.${EXT_SO}" | grep -v '(lib|parse)/t/' | grep lib | grep -v /bin/ | grep -v /p/), \
 	  echo " ${DESTDIR}${LIBDIR}/$(call libpath-to-name-version,$(lib),${LIBVERSION})"; \
 	  rm -f "${DESTDIR}${LIBDIR}/$(call libpath-to-name-version,$(lib),${LIBVERSION})"; \
 	  ${INSTALL_LIB} "$(lib)" "${DESTDIR}${LIBDIR}/$(call libpath-to-name-version,$(lib),${LIBVERSION})"; \
@@ -177,9 +181,6 @@ install: install-includes install-pkgconfig
 	  do echo " ${DESTDIR}${LIBDIR}/radare2/${VERSION}/$$FILE"; \
 	  ${INSTALL_LIB} "$$FILE" "${DESTDIR}${LIBDIR}/radare2/${VERSION}" ; done
 	cd "${DESTDIR}${LIBDIR}/radare2" ; ln -fs "${VERSION}" last
-
-#@echo "lang/p/radare.* ${DESTDIR}${DESTDIR}${PREFIX}/${LIBDIR}/radare2/${VERSION}"
-#${INSTALL_DATA} lang/p/radare.* ${DESTDIR}${LIBDIR}/radare2/${VERSION}
 
 deinstall uninstall:
 	# libraries

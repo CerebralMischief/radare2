@@ -200,6 +200,7 @@ EXTRA=""
 for a in `IFS=+ echo ${CPU}` ; do
         CPUS="-arch $a ${CPUS}"
 done
+export ALFLAGS="${CPUS}"
 export LDFLAGS="${LDFLAGS} ${CPUS}"
 	export PS1="[ios-sdk-$CPU]> "
 	${SHELL}
@@ -235,7 +236,7 @@ fi
 if [ "${#ARCHS}" -gt 0 ]; then
 	iosClean
 	iosConfigure
-	if [ "$?" = 0 ] && [ "${#ARCHS}" -gt 0 ]; then
+	if [ "$?" = 0 ]; then
 		export CPU=$ARCHS
 		export SDK=iphoneos
 		echo "Building for $CPU"

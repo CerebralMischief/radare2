@@ -15,7 +15,7 @@ static const char *help_msg_a[] = {
 	"ae", "[?] [expr]", "analyze opcode eval expression (see ao)",
 	"af", "[?]", "analyze Functions",
 	"aF", "", "same as above, but using anal.depth=1",
-	"ag", "[?] [options]", "output Graphviz code",
+	"ag", "[?] [options]", "draw graphs in various formats",
 	"ah", "[?]", "analysis hints (force opcode size, ...)",
 	"ai", " [addr]", "address information (show perms, stack, heap, ...)",
 	"an"," [name] [@addr]","show/rename/create whatever flag/function is used at addr",
@@ -379,26 +379,30 @@ static const char *help_msg_afvs[] = {
 };
 
 static const char *help_msg_ag[] = {
-	"Usage:", "ag[?f]", " Graphviz/graph code",
-	"ag", " [addr]", "output graphviz code (bb at addr and children)",
-	"ag-", "", "Reset the current ASCII art graph (see agn, age, agg?)",
-	"aga", " [addr]", "idem, but only addresses",
-	"agr", "[j] [addr]", "output graphviz call graph of function",
-	"agg", "", "display current graph created with agn and age (see also ag-)",
-	"agc", "[*j] [addr]", "output graphviz call graph of function",
-	"agC", "[j]", "Same as agc -1. full program callgraph",
-	"agd", " [fcn name]", "output graphviz code of diffed function",
-	"age", "[?] title1 title2", "Add an edge to the current graph",
-	"agf", " [addr]", "Show ASCII art graph of given function",
-	"agg", "[?] [kdi*]", "Print graph in ASCII-Art, graphviz, k=v, r2 or visual",
-	"agj", " [addr]", "idem, but in JSON format",
-	"agJ", " [addr]", "idem, but in JSON format with formatted disassembly (like pdJ)",
-	"agk", " [addr]", "idem, but in SDB key-value format",
-	"agl", " [fcn name]", "output graphviz code using meta-data",
-	"agn", "[?] title body", "Add a node to the current graph",
-	"ags", " [addr]", "output simple graphviz call graph of function (only bb offset)",
-	"agt", " [addr]", "find paths from current offset to given address",
-	"agv", "", "Show function graph in web/png (see graph.web and cmd.graph) or agf for asciiart",
+	"Usage:", "ag<graphtype><format> [addr]", "",
+	"Graph commands:", "", "",
+	"agc", "[format] [fcn addr]", "Function callgraph",
+	"agf", "[format] [fcn addr]", "Basic blocks function graph",
+	"agx", "[format] [addr]", "Cross references graph",
+	"agr", "[format] [fcn addr]", "References graph",
+	"aga", "[format] [fcn addr]", "Data references graph",
+	"agd", "[format] [fcn addr]", "Diff graph",
+	"agi", "[format]", "Imports graph",
+	"agg", "[format]", "Custom graph",
+	"ag-", "", "Clear the custom graph",
+	"agn", "[?] title body", "Add a node to the custom graph",
+	"age", "[?] title1 title2", "Add an edge to the custom graph",
+	"","","",
+	"Output formats:", "", "",
+	"<blank>", "", "Ascii art",
+	"v", "", "Interactive ascii art",
+	"t", "", "Tiny ascii art",
+	"d", "", "Graphviz dot",
+	"j", "", "json ('J' for formatted disassembly)",
+	"g", "", "Graph Modelling Language (gml)",
+	"k", "", "SDB key-value",
+	"*", "", "r2 commands",
+	"w", "", "Web/image (see graph.extension and graph.web)",
 	NULL
 };
 
@@ -409,17 +413,6 @@ static const char *help_msg_age[] = {
 	"age", " \"title1 with spaces\" title2", "Add an edge from node \"title1 with spaces\" to node \"title2\"",
 	"age-", " title1 title2", "Remove an edge from the node with \"title1\" as title to the one with title \"title2\"",
 	"age?", "", "Show this help",
-	NULL
-};
-
-static const char *help_msg_agg[] = {
-	"Usage:", "agg[kid?*]", "print graph",
-	"agg", "", "show current graph in ascii art",
-	"aggk", "", "show graph in key=value form",
-	"aggi", "", "enter interactive mode for the current graph",
-	"aggd", "", "print the current graph in GRAPHVIZ dot format",
-	"aggv", "", "run graphviz + viewer (see 'e cmd.graph')",
-	"agg*", "", "in r2 commands, to save in projects, etc",
 	NULL
 };
 
@@ -595,7 +588,6 @@ static void cmd_anal_init(RCore *core) {
 	DEFINE_CMD_DESCRIPTOR (core, afvs);
 	DEFINE_CMD_DESCRIPTOR (core, ag);
 	DEFINE_CMD_DESCRIPTOR (core, age);
-	DEFINE_CMD_DESCRIPTOR (core, agg);
 	DEFINE_CMD_DESCRIPTOR (core, agn);
 	DEFINE_CMD_DESCRIPTOR (core, ah);
 	DEFINE_CMD_DESCRIPTOR (core, ahi);
@@ -2345,8 +2337,8 @@ static int cmd_anal_fcn(RCore *core, const char *input) {
 				key = resolve_fcn_name (core->anal, fcn_name);
 			}
 			if (key) {
-				const char *fcn_type = r_anal_type_func_ret (core->anal, key);
-				int nargs = r_anal_type_func_args_count (core->anal, key);
+				const char *fcn_type = r_type_func_ret (core->anal->sdb_types, key);
+				int nargs = r_type_func_args_count (core->anal->sdb_types, key);
 				if (fcn_type) {
 					char *sp = " ";
 					if (*fcn_type && (fcn_type[strlen (fcn_type) - 1] == '*')) {
@@ -2608,7 +2600,7 @@ static int cmd_anal_fcn(RCore *core, const char *input) {
 				if (fcn) {
 					RAnalRef *ref;
 					RListIter *iter;
-					RList *refs = r_anal_fcn_get_refs_sorted (core->anal, fcn);
+					RList *refs = r_anal_fcn_get_refs (core->anal, fcn);
 					r_list_foreach (refs, iter, ref) {
 						if (input[2] == 'j') {
 							r_cons_printf ("{\"type\":\"%c\",\"from\":%"PFMT64d",\"to\":%"PFMT64d"}%s",
@@ -2682,7 +2674,7 @@ static int cmd_anal_fcn(RCore *core, const char *input) {
 			if (fcn) {
 				RAnalRef *ref;
 				RListIter *iter;
-				RList *refs = r_anal_fcn_get_refs_sorted (core->anal, fcn);
+				RList *refs = r_anal_fcn_get_refs (core->anal, fcn);
 				r_list_foreach (refs, iter, ref) {
 					if (ref->addr == UT64_MAX) {
 						//eprintf ("Warning: ignore 0x%08"PFMT64x" call 0x%08"PFMT64x"\n", ref->at, ref->addr);
@@ -2702,7 +2694,7 @@ static int cmd_anal_fcn(RCore *core, const char *input) {
 					if (f) {
 						RListIter *iter;
 						RAnalRef *ref;
-						RList *refs1 = r_anal_fcn_get_refs_sorted (core->anal, f);
+						RList *refs1 = r_anal_fcn_get_refs (core->anal, f);
 						r_list_foreach (refs1, iter, ref) {
 							if (!r_io_is_valid_offset (core->io, ref->addr, !core->anal->opt.noncode)) {
 								continue;
@@ -4491,20 +4483,23 @@ static void cmd_anal_opcode(RCore *core, const char *input) {
 	case 'e': // "aoe"
 	case 'r': {
 		int count = 1;
+		int obs = core->blocksize;
 		if (input[1] && input[2]) {
 			l = (int)r_num_get (core->num, input + 1);
 			if (l > 0) {
 				count = l;
 			}
-			if (l > tbs) {
-				r_core_block_size (core, l * 4);
-			//	len = l;
+			l *= 8;
+			if (l > obs) {
+				r_core_block_size (core, l);
 			}
 		} else {
-			len = l = core->blocksize;
 			count = 1;
 		}
-		core_anal_bytes (core, core->block, len, count, input[0]);
+		core_anal_bytes (core, core->block, core->blocksize, count, input[0]);
+		if (obs != core->blocksize) {
+			r_core_block_size (core, obs);
+		}
 		}
 		break;
 	case '*':
@@ -5274,7 +5269,7 @@ static bool cmd_anal_refs(RCore *core, const char *input) {
 			list = list_ = r_anal_xrefs_get_from (core->anal, addr);
 			if (!list) {
 				RAnalFunction * fcn = r_anal_get_fcn_in (core->anal, addr, 0);
-				list = r_anal_fcn_get_refs_sorted (core->anal, fcn);
+				list = r_anal_fcn_get_refs (core->anal, fcn);
 			}
 		} else {
 			list = r_anal_refs_get (core->anal, addr);
@@ -5784,7 +5779,7 @@ static void cmd_agraph_print(RCore *core, const char *input) {
 		if (r_config_get_i (core->config, "graph.web")) {
 			r_core_cmd0 (core, "=H /graph/");
 		} else {
-			char *cmd = r_core_graph_cmd ("aggd");
+			char *cmd = r_core_graph_cmd (core, "aggd");
 			if (cmd && *cmd) {
 				r_core_cmd0 (core, cmd);
 			}
@@ -5792,9 +5787,6 @@ static void cmd_agraph_print(RCore *core, const char *input) {
 		}
 		break;
 	}
-	case '?':
-		r_core_cmd_help (core, help_msg_agg);
-		break;
 	default:
 		eprintf ("Usage: see ag?\n");
 	}
@@ -5802,7 +5794,6 @@ static void cmd_agraph_print(RCore *core, const char *input) {
 
 static void cmd_anal_graph(RCore *core, const char *input) {
 	RList *list;
-	const char *arg;
 	switch (input[0]) {
 	case 'f': // "agf"
 		switch (input[1]) {
@@ -5852,7 +5843,7 @@ static void cmd_anal_graph(RCore *core, const char *input) {
 			if (r_config_get_i (core->config, "graph.web")) {
 				r_core_cmd0 (core, "=H /graph/");
 			} else {
-				char *cmd = r_core_graph_cmd ("agfd");
+				char *cmd = r_core_graph_cmd (core, "agfd");
 				if (cmd && *cmd) {
 					r_core_cmd0 (core, cmd);
 				}
@@ -5992,6 +5983,28 @@ static void cmd_anal_graph(RCore *core, const char *input) {
 			break;
 		}
 		break;
+	case 'i': // "agi" import graph
+		switch (input[1]) {
+		case 'v':
+		case 't':
+		case 'd':
+		case 'J':
+		case 'j':
+		case 'g':
+		case 'k':
+		case 'w':
+		case ' ':
+		case 0:
+			r_core_cmdf (core, "ag-; .agi*; agg%c;", input[1]);
+			break;
+		case '*':
+			r_core_anal_importxrefs (core);
+			break;
+		default:
+			eprintf ("Usage: see ag?\n");
+			break;
+		}
+		break;
 	case 'c': // "agc"
 		switch (input[1]) {
 		case 'v':
@@ -6013,12 +6026,12 @@ static void cmd_anal_graph(RCore *core, const char *input) {
 			r_core_cmd0 (core, "ag-; .agc* $$; agg;");
 			break;
 		case 'g': {
-			ut64 addr = input[2]? r_num_math (core->num, input + 1): core->offset;
+			ut64 addr = input[2] ? r_num_math (core->num, input + 2): core->offset;
 			r_core_anal_callgraph (core, addr, R_GRAPH_FORMAT_GMLFCN);
 			break;
 		}
 		case 'd': {
-			ut64 addr = input[2]? r_num_math (core->num, input + 1): core->offset;
+			ut64 addr = input[2] ? r_num_math (core->num, input + 2): core->offset;
 			r_core_anal_callgraph (core, addr, R_GRAPH_FORMAT_DOT);
 			break;
 		}
@@ -6051,37 +6064,87 @@ static void cmd_anal_graph(RCore *core, const char *input) {
 		r_core_anal_graph (core, r_num_math (core->num, input + 1), R_CORE_ANAL_GRAPHLINES);
 		break;
 	case 'a': // "aga"
-		r_core_anal_graph (core, r_num_math (core->num, input + 1), 0);
-		break;
-	case 'd': // "agd"
-		r_core_anal_graph (core, r_num_math (core->num, input + 1),
-				R_CORE_ANAL_GRAPHBODY | R_CORE_ANAL_GRAPHDIFF);
-		break;
-	case 'v': // "agv"
-		if (r_config_get_i (core->config, "graph.web")) {
-			r_core_cmd0 (core, "=H /graph/");
-		} else {
-			const char *cmd = r_config_get (core->config, "cmd.graph");
+		switch (input[1]) {
+		case 'v':
+		case 't':
+		case 'k':
+		case 'w':
+		case 'g':
+		case 'j':
+		case 'J':
+		case 'd':
+		case ' ': {
+			char *cmd = r_str_newf ("ag-; .aga* %lld; agg%c;",
+				input[2] ? r_num_math (core->num, input + 2) : core->offset, input[1]);
 			if (cmd && *cmd) {
 				r_core_cmd0 (core, cmd);
-			} else {
-				r_core_cmd0 (core, "agf");
+			}
+			free (cmd);
+			break;
+			}
+		case 0:
+			r_core_cmd0 (core, "ag-; .aga* $$; agg;");
+			break;
+		case '*': {
+			ut64 addr = input[2]? r_num_math (core->num, input + 2): core->offset;
+			r_core_anal_datarefs (core, addr);
+			break;
+			}
+		default:
+			 eprintf ("Usage: see ag?\n");
+			 break;
+		}
+		break;
+	case 'd': // "agd"
+		switch (input[1]) {
+		case 'v':
+		case 't':
+		case 'j':
+		case 'J':
+		case 'g':
+		case 'k':
+		case '*':
+		case ' ':
+		case 0:
+			eprintf ("Currently the only supported formats for the diff graph are 'agdd' and 'agdw'\n");
+			break;
+		case 'd': {
+			ut64 addr = input[2]? r_num_math (core->num, input + 2): core->offset;
+			r_core_gdiff_fcn (core, addr, core->offset);
+			r_core_anal_graph (core, addr, R_CORE_ANAL_GRAPHBODY | R_CORE_ANAL_GRAPHDIFF);
+			break;
+			}
+		case 'w': {
+			char *cmdargs = r_str_newf ("agdd %lld",
+				input[2] ? r_num_math (core->num, input + 2) : core->offset);
+			char *cmd = r_core_graph_cmd (core, cmdargs);
+			if (cmd && *cmd) {
+				r_core_cmd0 (core, cmd);
+			}
+			free (cmd);
+			free (cmdargs);
+			break;
 			}
 		}
 		break;
-	case '?': // "ag?"
-		r_core_cmd_help (core, help_msg_ag);
+	case 'v': // "agv" alias for "agfv"
+		r_core_cmdf (core, "agfv%s", input + 1);
 		break;
-	case ' ': // "ag"
-		arg = strchr (input, ' ');
-		r_core_anal_graph (core, r_num_math (core->num, arg? arg + 1: NULL),
-				R_CORE_ANAL_GRAPHBODY);
-		break;
-	case 0:
-		eprintf ("|ERROR| Usage: ag [addr]\n");
+	case 'w':// "agw" 
+		if (r_config_get_i (core->config, "graph.web")) {
+			r_core_cmd0 (core, "=H /graph/");
+		} else {
+			char *cmdargs = r_str_newf ("agfd %lld", r_num_math (core->num, input + 1));
+			char *cmd = r_core_graph_cmd (core, cmdargs);
+			if (cmd && *cmd) {
+				r_core_cmd0 (core, cmd);
+			}
+			free (cmd);
+			free (cmdargs);
+		}
 		break;
 	default:
-		eprintf ("See ag?\n");
+		r_core_cmd_help (core, help_msg_ag);
 		break;
 	}
 }
