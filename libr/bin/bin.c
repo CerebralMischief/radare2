@@ -115,16 +115,13 @@ R_API void r_bin_xtrdata_free(void /*RBinXtrData*/ *data_) {
 R_API RList* r_bin_raw_strings(RBinFile *bf, int min) {
 	RList *l = NULL;
 	if (bf) {
-		int tmp = bf->rawstr;
-		bf->rawstr = 2;
-		l = r_bin_file_get_strings (bf, min, 0);
-		bf->rawstr = tmp;
+		l = r_bin_file_get_strings (bf, min, 0, 2);
 	}
 	return l;
 }
 
-R_API int r_bin_dump_strings(RBinFile *a, int min) {
-	r_bin_file_get_strings (a, min, 1);
+R_API int r_bin_dump_strings(RBinFile *a, int min, int raw) {
+	r_bin_file_get_strings (a, min, 1, raw);
 	return 0;
 }
 
@@ -411,40 +408,23 @@ R_API int r_bin_load_io_at_offset_as_sz(RBin *bin, int fd, ut64 baseaddr,
 			}
 		}
 	}
-#if 0
-	if (!buf_bytes) {
-		if (sz < 1) {
-			eprintf ("Cannot allocate %d bytes\n", sz + 1);
-			return false;
-		}
-		buf_bytes = calloc (1, sz + 1);
-		if (!buf_bytes) {
-			eprintf ("Cannot allocate %d bytes.\n", sz + 1);
-			return false;
-		}
-		ut64 seekaddr = is_debugger? baseaddr: loadaddr;
-		if (!iob->fd_read_at (io, fd, seekaddr, buf_bytes, sz)) {
-			sz = 0LL;
-		}
-	}
-#else
 	// this thing works for 2GB ELF core from vbox
 	if (!buf_bytes) {
-		if (sz < 1) {
+		if ((int)sz < 0) {
 			eprintf ("Cannot allocate %d bytes\n", (int)(sz));
 			return false;
 		}
-		buf_bytes = calloc (1, sz);
+		const int asz = sz? sz: 1;
+		buf_bytes = calloc (1, asz);
 		if (!buf_bytes) {
-			eprintf ("Cannot allocate %d bytes.\n", (int)(sz + 1));
+			eprintf ("Cannot allocate %d bytes.\n", asz);
 			return false;
 		}
 		ut64 seekaddr = is_debugger? baseaddr: loadaddr;
-		if (!iob->fd_read_at (io, fd, seekaddr, buf_bytes, sz)) {
+		if (!iob->fd_read_at (io, fd, seekaddr, buf_bytes, asz)) {
 			sz = 0LL;
 		}
 	}
-#endif
 	if (bin->use_xtr && !name && (st64)sz > 0) {
 		// XXX - for the time being this is fine, but we may want to
 		// change the name to something like
@@ -629,7 +609,7 @@ R_API void *r_bin_free(RBin *bin) {
 	r_list_free (bin->plugins);
 	r_list_free (bin->binldrs);
 	sdb_free (bin->sdb);
-	r_id_pool_free (bin->file_ids);
+	r_id_storage_free (bin->ids);
 	memset (bin, 0, sizeof (RBin));
 	free (bin);
 	return NULL;
@@ -898,7 +878,7 @@ R_API RList *r_bin_reset_strings(RBin *bin) {
 	if (plugin && plugin->strings) {
 		o->strings = plugin->strings (a);
 	} else {
-		o->strings = r_bin_file_get_strings (a, bin->minstrlen, 0);
+		o->strings = r_bin_file_get_strings (a, bin->minstrlen, 0, a->rawstr);
 	}
 	if (bin->debase64) {
 		r_bin_object_filter_strings (o);
@@ -1018,7 +998,7 @@ R_API RBin *r_bin_new() {
 	bin->want_dbginfo = true;
 	bin->cur = NULL;
 	bin->io_owned = false;
-	bin->file_ids = r_id_pool_new (0, 0xffffffff);
+	bin->ids = r_id_storage_new (0, ST32_MAX);
 
 	/* bin parsers */
 	bin->binfiles = r_list_newf ((RListFree)r_bin_file_free);

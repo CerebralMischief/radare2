@@ -1,4 +1,4 @@
-/* radare2 - LGPL - Copyright 2013-2016 - pancake */
+/* radare2 - LGPL - Copyright 2013-2018 - pancake */
 
 #include <getopt.c>
 #include <r_core.h>
@@ -78,13 +78,11 @@ int main(int argc, char **argv) {
 	if (dodaemon) {
 #if LIBC_HAVE_FORK
 		int pid = fork ();
-#else
-		int pid = -1;
-#endif
 		if (pid > 0) {
 			printf ("%d\n", pid);
 			return 0;
 		}
+#endif
 	}
 	s = r_socket_new (false);
 	s->local = listenlocal;
@@ -103,7 +101,7 @@ int main(int argc, char **argv) {
 		char *result_heap = NULL;
 		const char *result = page_index;
 
-		rs = r_socket_http_accept (s, timeout);
+		rs = r_socket_http_accept (s, 0, timeout);
 		if (!rs) continue;
 		if (!strcmp (rs->method, "GET")) {
 			if (!strncmp (rs->path, "/proc/kill/", 11)) {

@@ -23,9 +23,9 @@ CS_PATCHES=0
 else
 CS_TAR=
 CS_URL=$(GIT_PREFIX)github.com/aquynh/capstone.git
-CS_UPD=20180511
+CS_UPD=20180619
 CS_BRA=next
-CS_TIP=37569a6874c8547b349a80823adda9284499fe80
+CS_TIP=ba25ab0fe15d0b2737219ffde399a4346850d583
 # REVERT THIS COMMIT BECAUSE ITS WRONG
 CS_REV=
 CS_PATCHES=1
@@ -92,7 +92,6 @@ ifeq ($(filter sdb/sdb${BUILD_EXT_EXE},$(SDB_TARGETS)),)
 SDB_TARGETS+=sdb/sdb${BUILD_EXT_EXE}
 endif
 endif
-
 
 targets:
 	for TARGET in ${SDB_TARGETS} ; do ${MAKE} $$TARGET ; done
@@ -261,7 +260,7 @@ endif
 capstone-build: capstone
 	cd capstone && CFLAGS="-Dmips=mips ${CAPSTONE_CFLAGS} $(CFLAGS)" LDFLAGS="$(LDFLAGS)" \
 		$(MAKE) $(CAPSTONE_MAKEFLAGS) CC="$(CC)" AR_EXT=a IS_CYGWIN=0 CAPSTONE_STATIC=yes CAPSTONE_SHARED=no \
-		RANLIB="$(RANLIB)" AR="$(AR)" IS_MINGW=0 libcapstone.a
+		RANLIB="$(RANLIB)" LIBARCHS="" AR="$(AR)" IS_MINGW=0 libcapstone.a
 ifneq (${EXT_AR},a)
 	-cp -f capstone/libcapstone.a capstone/libcapstone.${EXT_AR}
 endif

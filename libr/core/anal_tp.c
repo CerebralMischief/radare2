@@ -130,50 +130,6 @@ static void type_match(RCore *core, ut64 addr, char *name, int prev_idx) {
 	free (fcn_name);
 }
 
-#if 0
-static int stack_clean (RCore *core, ut64 addr, RAnalFunction *fcn) {
-	int offset, ret;
-	char *tmp, *str, *sig;
-	RAnalOp *op = r_core_anal_op (core, addr);
-	if (!op) {
-		return 0;
-	}
-	str = strdup (r_strbuf_get (&op->esil));
-	if (!str) {
-		return 0;
-	}
-	tmp = strchr (str, ',');
-	if (!tmp) {
-		free (str);
-		return 0;
-	}
-	*tmp++ = 0;
-
-	offset = r_num_math (core->num, str);
-	const char *sp = r_reg_get_name (core->anal->reg, R_REG_NAME_SP);
-	sig = sdb_fmt ("%s,+=", sp);
-	ret = 0;
-	if (!strncmp (tmp, sig, strlen (sig))) {
-		const char *esil = sdb_fmt ("%d,%s,-=", offset, sp);
-		r_anal_esil_parse (core->anal->esil, esil);
-		r_anal_esil_stack_free (core->anal->esil);
-		r_core_esil_step (core, UT64_MAX, NULL, NULL);
-		ret = op->size;
-	}
-	r_anal_op_free (op);
-	free (str);
-	return ret;
-}
-#endif
-
-// Avoid Emulating these instructions
-static inline bool isnonlinear(int optype) {
-	return (optype ==  R_ANAL_OP_TYPE_CALL || optype ==  R_ANAL_OP_TYPE_JMP
-			|| optype == R_ANAL_OP_TYPE_TRAP || optype == R_ANAL_OP_TYPE_UJMP
-			|| optype ==  R_ANAL_OP_TYPE_CJMP|| optype == R_ANAL_OP_TYPE_UCALL
-			|| optype == R_ANAL_OP_TYPE_RET);
-}
-
 // Emulates previous N instr
 static void emulate_prev_N_instr(RCore *core, ut64 at, ut64 curpc) {
 	int i, inslen, bsize = R_MIN (64, core->blocksize);
@@ -195,9 +151,9 @@ static void emulate_prev_N_instr(RCore *core, ut64 at, ut64 curpc) {
 			i = 0;
 		}
 		if (!i) {
-			r_core_read_at (core, curpc, arr, bsize);
+			r_io_read_at (core->io, curpc, arr, bsize);
 		}
-		inslen = r_anal_op (core->anal, &aop, curpc, arr + i, bsize - i, R_ANAL_OP_MASK_ALL);
+		inslen = r_anal_op (core->anal, &aop, curpc, arr + i, bsize - i, R_ANAL_OP_MASK_BASIC);
 		int incr = inslen - 1;
 		if (incr < 0) {
 			incr = minopcode;
@@ -205,7 +161,7 @@ static void emulate_prev_N_instr(RCore *core, ut64 at, ut64 curpc) {
 		i += incr;
 		curpc += incr;
 		if ((inslen > 0) || (inslen < 50)) {
-			if (isnonlinear (aop.type)) {   // skip the instr
+			if (r_anal_op_nonlinear (aop.type)) {   // skip the instr
 				r_reg_set_value (core->dbg->reg, r, curpc + 1);
 			} else {                       // step instr
 				r_core_esil_step (core, UT64_MAX, NULL, NULL);
@@ -252,6 +208,7 @@ R_API void r_core_anal_type_match(RCore *core, RAnalFunction *fcn) {
 		int *previnstr = calloc (MAXINSTR + 1, sizeof (int));
 		if (!previnstr) {
 			eprintf ("Cannot allocate %d byte(s)\n", MAXINSTR + 1);
+			free (buf);
 			return;
 		}
 		r_cons_break_push (NULL, NULL);
@@ -263,9 +220,9 @@ R_API void r_core_anal_type_match(RCore *core, RAnalFunction *fcn) {
 				i = 0;
 			}
 			if (!i) {
-				r_core_read_at (core, addr, buf, bsize);
+				r_io_read_at (core->io, addr, buf, bsize);
 			}
-			ret = r_anal_op (core->anal, &aop, addr, buf + i, bsize - i, R_ANAL_OP_MASK_ALL);
+			ret = r_anal_op (core->anal, &aop, addr, buf + i, bsize - i, R_ANAL_OP_MASK_BASIC);
 			if (ret <= 0) {
 				i += minopcode;
 				addr += minopcode;

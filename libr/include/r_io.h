@@ -1,10 +1,10 @@
-/* radare2 - LGPL - Copyright 2017 - condret, pancake, alvaro */
+/* radare2 - LGPL - Copyright 2017-2018 - condret, pancake, alvaro */
 
 #ifndef R2_IO_H
 #define R2_IO_H
 
 #include "r_list.h"
-#include <r_util/r_id_storage.h>
+#include <r_util/r_idpool.h>
 #include <r_util/r_cache.h>
 #include <r_util/r_buf.h>
 #include "r_socket.h"
@@ -368,6 +368,10 @@ R_API int r_io_plugin_generate(RIO *io);
 R_API bool r_io_plugin_add(RIO *io, RIOPlugin *plugin);
 R_API int r_io_plugin_list(RIO *io);
 R_API int r_io_plugin_list_json(RIO *io);
+R_API int r_io_plugin_read(RIODesc *desc, ut8 *buf, int len);
+R_API int r_io_plugin_write(RIODesc *desc, const ut8 *buf, int len);
+R_API int r_io_plugin_read_at(RIODesc *desc, ut64 addr, ut8 *buf, int len);
+R_API int r_io_plugin_write_at(RIODesc *desc, ut64 addr, const ut8 *buf, int len);
 R_API RIOPlugin *r_io_plugin_resolve(RIO *io, const char *filename, bool many);
 R_API RIOPlugin *r_io_plugin_resolve_fd(RIO *io, int fd);
 R_API RIOPlugin *r_io_plugin_get_default(RIO *io, const char *filename, bool many);

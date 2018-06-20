@@ -2,15 +2,12 @@
 
 #include "r_config.h"
 #include "r_util.h" // r_str_hash, r_str_chop, ...
-#ifdef _MSC_VER
-#define strcasecmp stricmp
-#endif
+
 R_API RConfigNode* r_config_node_new(const char *name, const char *value) {
-	RConfigNode *node;
-	if (STRNULL (name)) {
+	if (IS_NULLSTR (name)) {
 		return NULL;
 	}
-	node = R_NEW0 (RConfigNode);
+	RConfigNode *node = R_NEW0 (RConfigNode);
 	if (!node) {
 		return NULL;
 	}
@@ -50,13 +47,13 @@ R_API void r_config_node_free(void *n) {
 }
 
 static bool isBoolean(const char *val) {
-	if (!strcasecmp (val, "true") || !strcasecmp (val, "false")) {
+	if (!r_str_casecmp (val, "true") || !r_str_casecmp (val, "false")) {
 		return true;
 	}
-	if (!strcasecmp (val, "on") || !strcasecmp (val, "off")) {
+	if (!r_str_casecmp (val, "on") || !r_str_casecmp (val, "off")) {
 		return true;
 	}
-	if (!strcasecmp (val, "yes") || !strcasecmp (val, "no")) {
+	if (!r_str_casecmp (val, "yes") || !r_str_casecmp (val, "no")) {
 		return true;
 	}
 	return false;
@@ -161,7 +158,7 @@ R_API void r_config_list(RConfig *cfg, const char *str, int rad) {
 	bool json = false;
 	bool isFirst = false;
 
-	if (!STRNULL (str)) {
+	if (!IS_NULLSTR (str)) {
 		str = r_str_trim_ro (str);
 		len = strlen (str);
 		if (len > 0 && str[0] == 'j') {
@@ -284,7 +281,7 @@ R_API void r_config_list(RConfig *cfg, const char *str, int rad) {
 }
 
 R_API RConfigNode* r_config_node_get(RConfig *cfg, const char *name) {
-	if (!cfg || STRNULL (name)) {
+	if (!cfg || IS_NULLSTR (name)) {
 		return NULL;
 	}
 	return ht_find (cfg->ht, name, NULL);
@@ -309,14 +306,17 @@ R_API int r_config_set_setter(RConfig *cfg, const char *key, RConfigCallback cb)
 }
 
 static bool is_true(const char *s) {
-	return !strcasecmp ("yes", s) || !strcasecmp ("on", s) || !strcasecmp ("true", s) || !strcasecmp ("1", s);
+	return !r_str_casecmp ("yes", s) || !r_str_casecmp ("on", s) || !r_str_casecmp ("true", s) || !r_str_casecmp ("1", s);
 }
 
 static bool is_bool(const char *s) {
-	return !strcasecmp ("true", s) || !strcasecmp ("false", s);
+	return !r_str_casecmp ("true", s) || !r_str_casecmp ("false", s);
 }
 
 R_API const char* r_config_get(RConfig *cfg, const char *name) {
+	if (!cfg || !name) {
+		return NULL;
+	}
 	RConfigNode *node = r_config_node_get (cfg, name);
 	if (node) {
 		if (node->getter) {
@@ -404,7 +404,7 @@ R_API RConfigNode* r_config_set(RConfig *cfg, const char *name, const char *valu
 	RConfigNode *node = NULL;
 	char *ov = NULL;
 	ut64 oi;
-	if (!cfg || STRNULL (name)) {
+	if (!cfg || IS_NULLSTR (name)) {
 		return NULL;
 	}
 	node = r_config_node_get (cfg, name);

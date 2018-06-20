@@ -466,6 +466,7 @@ static int r_core_rtr_http_run(RCore *core, int launch, const char *path) {
 		eprintf ("Cannot listen on http.port\n");
 		return 1;
 	}
+
 	if (launch=='H') {
 		const char *browser = r_config_get (core->config, "http.browser");
 		r_sys_cmdf ("%s http://%s:%d/%s &",
@@ -525,7 +526,8 @@ static int r_core_rtr_http_run(RCore *core, int launch, const char *path) {
 
 		/* this is blocking */
 		activateDieTime (core);
-		rs = r_socket_http_accept (s, timeout);
+
+		rs = r_socket_http_accept (s, 1, timeout);
 
 		origoff = core->offset;
 		origblk = core->block;
@@ -1400,7 +1402,7 @@ R_API void r_core_rtr_add(RCore *core, const char *_input) {
 		proto = RTR_PROT_RAP;
 		host = input;
 	}
-	while (*host && ISWHITECHAR (*host))
+	while (*host && IS_WHITECHAR (*host))
 		host++;
 
 	if (!(ptr = strchr (host, ':'))) {
@@ -1572,7 +1574,7 @@ R_API void r_core_rtr_add(RCore *core, const char *_input) {
 			continue;
 		}
 		rtr_host[i].proto = proto;
-		strncpy (rtr_host[i].host, host, sizeof (rtr_host[i].proto)-1);
+		strncpy (rtr_host[i].host, host, sizeof (rtr_host[i].host)-1);
 		rtr_host[i].port = r_num_get (core->num, port);
 		strncpy (rtr_host[i].file, file, sizeof (rtr_host[i].file)-1);
 		rtr_host[i].fd = fd;
@@ -1796,7 +1798,7 @@ R_API void r_core_rtr_cmd(RCore *core, const char *input) {
 		eprintf ("Error: Allocating cmd output\n");
 		return;
 	}
-	r_socket_read (fh, (ut8*)cmd_output, cmd_len);
+	r_socket_read_block (fh, (ut8*)cmd_output, cmd_len);
 	//ensure the termination
 	cmd_output[cmd_len] = 0;
 	r_cons_println (cmd_output);

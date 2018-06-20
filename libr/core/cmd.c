@@ -321,14 +321,14 @@ R_API RAsmOp *r_core_disassemble (RCore *core, ut64 addr) {
 	RAsmOp *op;
 	if (!b) {
 		b = r_buf_new ();
-		if (!b || !r_core_read_at (core, addr, buf, sizeof (buf))) {
+		if (!b || !r_io_read_at (core->io, addr, buf, sizeof (buf))) {
 			return NULL;
 		}
 		b->base = addr;
 		r_buf_set_bytes (b, buf, sizeof (buf));
 	} else {
 		if ((addr < b->base) || addr > (b->base + b->length - 32)) {
-			if (!r_core_read_at (core, addr, buf, sizeof (buf))) {
+			if (!r_io_read_at (core->io, addr, buf, sizeof (buf))) {
 				return NULL;
 			}
 			b->base = addr;
@@ -1242,22 +1242,23 @@ static int cmd_pipein(void *user, const char *input) {
 	return 0;
 }
 
-static int task_finished(void *user, void *data) {
-	eprintf ("TASK FINISHED\n");
-	return 0;
-}
-
-static int taskbgrun(RThread *th) {
-	char *res;
-	RCoreTask *task = th->user;
-	RCore *core = task->core;
-	// close (2); // no stderr
-	res = r_core_cmd_str (core, task->msg->text);
-	task->msg->res = res;
-	task->state = 'd';
-	eprintf ("\nTask %d finished\n", task->id);
-// TODO: run callback and pass result
-	return 0;
+static void task_test(RCore *core, int usecs) {
+	int i;
+	RCoreTask *task = r_core_task_self (core);
+	r_cons_break_push (NULL, NULL);
+	for (i = 0; i < 10; i++) {
+		if (r_cons_is_breaked()) {
+			r_cons_printf ("task %d was breaked!\n", task->id);
+			break;
+		}
+		r_cons_printf ("task %d doing work %d/%d\n", task->id, i, 10);
+		eprintf ("task %d doing work %d/%d\n", task->id, i, 10);
+		if (usecs > 0) {
+			r_sys_usleep (usecs);
+		}
+	}
+	r_cons_break_pop ();
+	r_cons_printf ("task %d is done!\n", task->id);
 }
 
 static int cmd_thread(void *data, const char *input) {
@@ -1267,68 +1268,54 @@ static int cmd_thread(void *data, const char *input) {
 	case 'j':
 		r_core_task_list (core, *input);
 		break;
-#if 0
-	case 't':
-		r_cons_break_push (NULL, NULL);
-		while (!r_cons_is_breaked ()) {
-			r_sys_sleep(1);
+	case 't': { // "&t"
+		int usecs = 0;
+		if (input[1] == ' ') {
+			usecs = (int) r_num_math (core->num, input + 1);
 		}
-		r_cons_break_pop ();
+		task_test (core, usecs);
 		break;
-#endif
-	case '&':
+	}
+	case '&': { // "&&"
 		if (r_sandbox_enable (0)) {
 			eprintf ("This command is disabled in sandbox mode\n");
 			return 0;
 		}
-		if (input[1] == '&') {
-			// wait until ^C
-		} else {
-			int tid = r_num_math (core->num, input + 1);
-			if (tid) {
-				RCoreTask *task = r_core_task_get (core, tid);
-				if (task) {
-					r_core_task_join (core, task);
-				} else {
-					eprintf ("Cannot find task\n");
-				}
+		int tid = r_num_math (core->num, input + 1);
+		if (tid) {
+			RCoreTask *task = r_core_task_get (core, tid);
+			if (task && task != core->main_task) {
+				r_core_task_join (core, core->current_task, task);
 			} else {
-				r_core_task_run (core, NULL);
+				eprintf ("Cannot find task\n");
 			}
+		} else {
+			r_core_task_join (core, core->current_task, NULL);
 		}
 		break;
-	case '=': {
+	}
+	case '=': { // "&="
 		// r_core_task_list (core, '=');
 		int tid = r_num_math (core->num, input + 1);
 		if (tid) {
 			RCoreTask *task = r_core_task_get (core, tid);
 			if (task) {
-				r_core_task_print (core, task, 0);
-				r_cons_printf ("%2d %s %s\n",
-					task->id, r_core_task_status (task), task->msg->text);
-				if (task->msg->res)
-					r_cons_println (task->msg->res);
+				if (task->res) {
+					r_cons_println (task->res);
+				}
 			} else {
 				eprintf ("Cannot find task\n");
 			}
-		} else {
-			r_core_task_list (core, 1);
-		}}
-		break;
-	case '+':
-		if (r_sandbox_enable (0)) {
-			eprintf ("This command is disabled in sandbox mode\n");
-			return 0;
 		}
-		r_core_task_add (core, r_core_task_new (core, input + 1, (RCoreTaskCallback)task_finished, core));
 		break;
+	}
 	case '-':
 		if (r_sandbox_enable (0)) {
 			eprintf ("This command is disabled in sandbox mode\n");
 			return 0;
 		}
 		if (input[1] == '*') {
-			r_core_task_del (core, -1);
+			r_core_task_del_all_done (core);
 		} else {
 			r_core_task_del (core, r_num_math (core->num, input + 1));
 		}
@@ -1341,24 +1328,7 @@ static int cmd_thread(void *data, const char *input) {
 			eprintf ("This command is disabled in sandbox mode\n");
 			return 0;
 		}
-		{
-			int tid = r_num_math (core->num, input + 1);
-			if (tid) {
-				RCoreTask *task = r_core_task_get (core, tid);
-				if (task) {
-					r_core_task_join (core, task);
-				} else {
-					eprintf ("Cannot find task\n");
-				}
-			} else {
-				RCoreTask *task = r_core_task_add (core, r_core_task_new (
-							core, input + 1, (RCoreTaskCallback)task_finished, core));
-				RThread *th = r_th_new (taskbgrun, task, 0);
-				task->msg->th = th;
-			}
-			//r_core_cmd0 (core, task->msg->text);
-			//r_core_task_del (core, task->id);
-		}
+		r_core_task_enqueue (core, r_core_task_new (core, input + 1, NULL, core));
 		break;
 	default:
 		eprintf ("&?\n");
@@ -2029,6 +1999,13 @@ static int r_core_cmd_subst_i(RCore *core, char *cmd, char *colon, bool *tmpseek
 	//ptr = strchr (cmd, '|');
 	ptr = (char *)r_str_lastbut (cmd, '|', quotestr);
 	if (ptr) {
+		if (ptr > cmd) {
+			char *ch = ptr - 1;
+			if (*ch == '\\') {
+				memmove (ch, ptr, strlen (ptr) + 1);
+				goto escape_pipe;
+			}
+		}
 		char *ptr2 = strchr (cmd, '`');
 		if (!ptr2 || (ptr2 && ptr2 > ptr)) {
 			if (!tick || (tick && tick > ptr)) {
@@ -2073,6 +2050,7 @@ static int r_core_cmd_subst_i(RCore *core, char *cmd, char *colon, bool *tmpseek
 			}
 		}
 	}
+escape_pipe:
 
 	// TODO must honor " and `
 	/* bool conditions */
@@ -2190,6 +2168,13 @@ next:
 	ptr = (char *)r_str_firstbut (cmd, '>', "\"");
 	// TODO honor `
 	if (ptr) {
+		if (ptr > cmd) {
+			char *ch = ptr - 1;
+			if (*ch == '\\') {
+				memmove (ch, ptr, strlen (ptr) + 1);
+				goto escape_redir;
+			}
+		}
 		if (ptr[0] && ptr[1] == '?') {
 			r_core_cmd_help (core, help_msg_greater_sign);
 			return true;
@@ -2207,7 +2192,7 @@ next:
 		/* r_cons_flush() handles interactive output (to the terminal)
 		 * differently (e.g. asking about too long output). This conflicts
 		 * with piping to a file. Disable it while piping. */
-		if (ptr > (cmd + 1) && ISWHITECHAR (ptr[-2])) {
+		if (ptr > (cmd + 1) && IS_WHITECHAR (ptr[-2])) {
 			char *fdnum = ptr - 1;
 			if (*fdnum == 'H') { // "H>"
 				scr_html = r_config_get_i (core->config, "scr.html");
@@ -2215,7 +2200,7 @@ next:
 				pipecolor = true;
 				*fdnum = 0;
 			} else {
-				if (IS_DIGIT(*fdnum)) {
+				if (IS_DIGIT (*fdnum)) {
 					fdn = *fdnum - '0';
 				}
 				*fdnum = 0;
@@ -2262,10 +2247,18 @@ next:
 		core->cons->use_tts = false;
 		return ret;
 	}
+escape_redir:
 next2:
 	/* sub commands */
 	ptr = strchr (cmd, '`');
 	if (ptr) {
+		if (ptr > cmd) {
+			char *ch = ptr - 1;
+			if (*ch == '\\') {
+				memmove (ch, ptr, strlen (ptr) + 1);
+				goto escape_backtick;
+			}
+		}
 		bool empty = false;
 		int oneline = 1;
 		if (ptr[1] == '`') {
@@ -2316,6 +2309,7 @@ next2:
 			return ret;
 		}
 	}
+escape_backtick:
 	// TODO must honor " and `
 	core->fixedblock = false;
 
@@ -3323,13 +3317,6 @@ R_API int r_core_cmd(RCore *core, const char *cstr, int log) {
 	char *cmd, *ocmd, *ptr, *rcmd;
 	int ret = false, i;
 
-	if (r_list_empty (core->tasks)) {
-		r_th_lock_enter (core->lock);
-	} else {
-		if (!r_core_task_self (core)) {
-			r_core_task_pause (core, NULL, true);
-		}
-	}
 	if (core->cmdfilter) {
 		const char *invalid_chars = ";|>`@";
 		for (i = 0; invalid_chars[i]; i++) {
@@ -3430,7 +3417,7 @@ beach:
 		RListIter *iter;
 		RCoreTask *task;
 		r_list_foreach (core->tasks, iter, task) {
-			r_th_pause (task->msg->th, false);
+			r_th_pause (task->thread, false);
 		}
 	}
 	/* run pending analysis commands */
@@ -3712,6 +3699,21 @@ R_API void r_core_cmd_repeat(RCore *core, int next) {
 		r_core_cmd0 (core, core->lastcmd);
 		break;
 	}
+}
+
+/* run cmd in the main task synchronously */
+R_API int r_core_cmd_task_sync(RCore *core, const char *cmd, bool log) {
+	RCoreTask *task = core->main_task;
+	char *s = strdup (cmd);
+	if (!s) {
+		return 0;
+	}
+	task->cmd = s;
+	task->cmd_log = log;
+	task->state = R_CORE_TASK_STATE_BEFORE_START;
+	int res = r_core_task_run_sync (core, task);
+	free (s);
+	return res;
 }
 
 static int cmd_ox(void *data, const char *input) {

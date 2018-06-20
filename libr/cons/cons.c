@@ -40,8 +40,60 @@ static void break_stack_free(void *ptr) {
 static void cons_stack_free(void *ptr) {
 	RConsStack *s = (RConsStack *)ptr;
 	free (s->buf);
+	if (s->grep) {
+		free (s->grep->str);
+	}
 	free (s->grep);
 	free (s);
+}
+
+static RConsStack *cons_stack_dump(bool recreate) {
+	RConsStack *data = R_NEW0 (RConsStack);
+	if (!data) {
+		return NULL;
+	}
+
+	if (I.buffer) {
+		data->buf = I.buffer;
+		data->buf_len = I.buffer_len;
+		data->buf_size = I.buffer_sz;
+	}
+
+	data->grep = R_NEW0 (RConsGrep);
+	if (data->grep) {
+		memcpy (data->grep, &I.grep, sizeof (RConsGrep));
+		if (I.grep.str) {
+			data->grep->str = strdup (I.grep.str);
+		}
+	}
+
+	if (recreate && I.buffer_sz > 0) {
+		I.buffer = malloc (I.buffer_sz);
+		if (!I.buffer) {
+			I.buffer = data->buf;
+			free (data);
+			return NULL;
+		}
+	} else {
+		I.buffer = NULL;
+	}
+
+	return data;
+}
+
+static void cons_stack_load(RConsStack *data, bool free_current) {
+	if (free_current) {
+		free (I.buffer);
+	}
+	I.buffer = data->buf;
+	data->buf = NULL;
+	I.buffer_len = data->buf_len;
+	I.buffer_sz = data->buf_size;
+
+	if (data->grep) {
+		free (I.grep.str);
+		memcpy (&I.grep, data->grep, sizeof (RConsGrep));
+	}
 }
 
 static void break_signal(int sig) {
@@ -230,6 +282,20 @@ R_API void r_cons_break_end() {
 		I.data = NULL;
 		I.event_interrupt = NULL;
 	}
+}
+
+R_API void *r_cons_sleep_begin(void) {
+	if (!I.cb_sleep_begin) {
+		return NULL;
+	}
+	return I.cb_sleep_begin (I.user);
+}
+
+R_API void r_cons_sleep_end(void *user) {
+	if (!I.cb_sleep_end) {
+		return;
+	}
+	I.cb_sleep_end (I.user, user);
 }
 
 #if __WINDOWS__ && !__CYGWIN__
@@ -454,6 +520,17 @@ R_API void r_cons_clear() {
 	I.lines = 0;
 }
 
+static void cons_grep_reset(RConsGrep *grep) {
+	grep->strings[0][0] = '\0';
+	grep->nstrings = 0; // XXX
+	grep->line = -1;
+	grep->sort = -1;
+	grep->sort_invert = false;
+	R_FREE (grep->str);
+	ZERO_FILL (grep->tokens);
+	grep->tokens_used = 0;
+}
+
 R_API void r_cons_reset() {
 	if (I.buffer) {
 		I.buffer[0] = '\0';
@@ -461,14 +538,7 @@ R_API void r_cons_reset() {
 	I.buffer_len = 0;
 	I.lines = 0;
 	I.lastline = I.buffer;
-	I.grep.strings[0][0] = '\0';
-	I.grep.nstrings = 0; // XXX
-	I.grep.line = -1;
-	I.grep.sort = -1;
-	I.grep.sort_invert = false;
-	R_FREE (I.grep.str);
-	ZERO_FILL (I.grep.tokens);
-	I.grep.tokens_used = 0;
+	cons_grep_reset (&I.grep);
 }
 
 R_API const char *r_cons_get_buffer() {
@@ -497,59 +567,85 @@ R_API void r_cons_filter() {
 }
 
 R_API void r_cons_push() {
-	if (I.cons_stack) {
-		RConsStack *data = R_NEW0 (RConsStack);
-		if (!data) {
-			return;
-		}
-		if (I.buffer) {
-			data->buf = malloc (I.buffer_sz);
-			if (!data->buf) {
-				free (data);
-				return;
-			}
-			memcpy (data->buf, I.buffer, I.buffer_sz);
-			data->buf_len = I.buffer_len;
-			data->buf_size = I.buffer_sz;
-		}
-		data->grep = R_NEW0 (RConsGrep);
-		if (data->grep) {
-			memcpy (data->grep, &I.grep, sizeof (RConsGrep));
-			if (I.grep.str) {
-				data->grep->str = strdup (I.grep.str);
-			}
-		}
-		r_stack_push (I.cons_stack, data);
-		I.buffer_len = 0;
-		if (I.buffer) {
-			memset (I.buffer, 0, I.buffer_sz);
-		}
+	if (!I.cons_stack) {
+		return;
+	}
+	RConsStack *data = cons_stack_dump (true);
+	if (!data) {
+		return;
+	}
+	r_stack_push (I.cons_stack, data);
+	I.buffer_len = 0;
+	if (I.buffer) {
+		memset (I.buffer, 0, I.buffer_sz);
 	}
 }
 
 R_API void r_cons_pop() {
-	if (I.cons_stack) {
-		RConsStack *data = (RConsStack *)r_stack_pop (I.cons_stack);
-		if (!data) {
-			return;
-		}
-		free (I.buffer);
-		I.buffer = data->buf ? malloc (data->buf_size) : NULL;
-		I.buffer_len = data->buf_len;
-		I.buffer_sz = data->buf_size;
-		if (I.buffer) {
-			memcpy (I.buffer, data->buf, data->buf_size);
-		}
-		if (data->grep) {
-			memcpy (&I.grep, data->grep, sizeof (RConsGrep));
-			if (data->grep->str) {
-				char *old = I.grep.str;
-				I.grep.str = strdup (data->grep->str);
-				R_FREE (old);
-			}
-		}
-		cons_stack_free ((void *)data);
+	if (!I.cons_stack) {
+		return;
 	}
+	RConsStack *data = (RConsStack *)r_stack_pop (I.cons_stack);
+	if (!data) {
+		return;
+	}
+	cons_stack_load (data, true);
+	cons_stack_free ((void *)data);
+}
+
+R_API RStack *r_cons_dump_new(void) {
+	RStack *stack = r_stack_newf (6, cons_stack_free);
+	if (!stack) {
+		return NULL;
+	}
+
+	RConsStack *data = R_NEW0 (RConsStack);
+	if (!data) {
+		r_stack_free (stack);
+		return NULL;
+	}
+
+	data->grep = R_NEW0 (RConsGrep);
+	if (!data->grep) {
+		R_FREE (data);
+		r_stack_free (stack);
+		return NULL;
+	}
+	cons_grep_reset (data->grep);
+
+	r_stack_push (stack, data);
+
+	return stack;
+}
+
+R_API void r_cons_dump_free(RStack *stack) {
+	r_stack_free (stack);
+}
+
+/* pushes the current state to the cons stack and returns the stack */
+R_API RStack *r_cons_dump(void) {
+	RStack *stack = I.cons_stack;
+	if (!stack) {
+		return NULL;
+	}
+	RConsStack *cur = cons_stack_dump (false);
+	if (!cur) {
+		return NULL;
+	}
+	r_stack_push (stack, cur);
+	return stack;
+}
+
+/* pops the top item from the stack and loads it.
+ * The rest of the stack will be the current cons stack */
+R_API void r_cons_load(RStack *stack) {
+	RConsStack *cur = r_stack_pop (stack);
+	cons_stack_load (cur, false);
+	// cur->buf is moved to cons instance by cons_stack_load(),
+	// make sure it is not freed by cons_stack_free()
+	cur->buf = NULL;
+	cons_stack_free (cur);
+	I.cons_stack = stack;
 }
 
 R_API void r_cons_flush() {
@@ -1210,6 +1306,47 @@ R_API char *r_cons_lastline(int *len) {
 		int delta = b - I.buffer;
 		*len = I.buffer_len - delta;
 	}
+	return b;
+}
+
+// same as r_cons_lastline(), but len will be the number of
+// utf-8 characters excluding ansi escape sequences as opposed to just bytes
+R_API char *r_cons_lastline_utf8_ansi_len(int *len) {
+	if (!len) {
+		return r_cons_lastline (0);
+	}
+
+	char *b = I.buffer + I.buffer_len;
+	int l = 0;
+	int last_possible_ansi_end = 0;
+	char ch = '\0';
+	char ch2;
+	while (b > I.buffer) {
+		ch2 = ch;
+		ch = *b;
+
+		if (ch == '\n') {
+			b++;
+			l--;
+			break;
+		}
+
+		// utf-8
+		if ((ch & 0xc0) != 0x80) {
+			l++;
+		}
+
+		// ansi
+		if (ch == 'J' || ch == 'm' || ch == 'H') {
+			last_possible_ansi_end = l - 1;
+		} else if (ch == '\x1b' && ch2 == '[') {
+			l = last_possible_ansi_end;
+		}
+
+		b--;
+	}
+
+	*len = l;
 	return b;
 }
 

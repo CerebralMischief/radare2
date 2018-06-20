@@ -1,11 +1,10 @@
-/* radare2 - LGPL - Copyright 2017 - wargio */
+/* radare2 - LGPL - Copyright 2017-2018 - wargio */
 
 #include <stdlib.h>
 #include <string.h>
 #include <r_util.h>
-#include <r_types.h>
-#include "r_x509_internal.h"
-#include "r_pkcs7_internal.h"
+#include "./x509.h"
+#include "./pkcs7.h"
 
 extern RJSVar *r_x509_name_json (RX509Name* name);
 

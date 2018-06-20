@@ -251,6 +251,7 @@ static int visual_help() {
 		" =        set cmd.vprompt (top row)\n"
 		" |        set cmd.cprompt (right column)\n"
 		" .        seek to program counter\n"
+		" #        toggle bytes in disasm view\n"
 		" \\        toggle visual split mode\n"
 		" \"        toggle the column mode (uses pC..)\n"
 		" /        in cursor mode search in current block\n"
@@ -274,6 +275,7 @@ static int visual_help() {
 		" gG       go seek to begin and end of file (0-$s)\n"
 		" hjkl     move around (or HJKL) (left-down-up-right)\n"
 		" i        insert hex or string (in hexdump) use tab to toggle\n"
+		" I        insert hexpair block \n"
 		" mK/'K    mark/go to Key (any key)\n"
 		" M        walk the mounted filesystems\n"
 		" n/N      seek next/prev function/flag/hit (scr.nkey)\n"
@@ -287,7 +289,7 @@ static int visual_help() {
 		" T        enter textlog chat console (TT)\n"
 		" uU       undo/redo seek\n"
 		" v        visual function/vars code analysis menu\n"
-		" V        (V)iew graph using cmd.graph (agv?)\n"
+		" V        (V)iew interactive ascii art graph (agfv)\n"
 		" wW       seek cursor to next/prev word\n"
 		" xX       show xrefs/refs of current function from/to data/code\n"
 		" yY       copy and paste selection\n"
@@ -431,6 +433,8 @@ static void visual_single_step_in(RCore *core) {
 }
 
 static void visual_single_step_over(RCore *core) {
+	bool io_cache = r_config_get_i (core->config, "io.cache");
+	r_config_set_i (core->config, "io.cache", false);
 	if (r_config_get_i (core->config, "cfg.debug")) {
 		if (core->print->cur_enabled) {
 			r_core_cmd (core, "dcr", 0);
@@ -443,6 +447,7 @@ static void visual_single_step_over(RCore *core) {
 		r_core_cmd (core, "aeso", 0);
 		r_core_cmd (core, ".ar*", 0);
 	}
+	r_config_set_i (core->config, "io.cache", io_cache);
 }
 
 static void visual_breakpoint(RCore *core) {
@@ -814,10 +819,10 @@ static ut64 prevop_addr(RCore *core, ut64 addr) {
 	// if we anal info didn't help then fallback to the dumb solution.
 	target = addr;
 	base = target - OPDELTA;
-	r_core_read_at (core, base, buf, sizeof (buf));
+	r_io_read_at (core->io, base, buf, sizeof (buf));
 	for (i = 0; i < sizeof (buf); i++) {
 		ret = r_anal_op (core->anal, &op, base + i,
-			buf + i, sizeof (buf) - i, R_ANAL_OP_MASK_ALL);
+			buf + i, sizeof (buf) - i, R_ANAL_OP_MASK_BASIC);
 		if (!ret) {
 			continue;
 		}
@@ -1642,6 +1647,7 @@ R_API void r_core_visual_browse(RCore *core) {
 		case '_':
 			r_core_visual_hudstuff (core);
 			break;
+		case 127: // backspace
 		case 'q':
 			return;
 		}
@@ -1726,7 +1732,7 @@ R_API int r_core_visual_cmd(RCore *core, const char *arg) {
 				r_cons_enable_mouse (true);
 			}
 			do {
-				op = r_core_anal_op (core, core->offset + core->print->cur);
+				op = r_core_anal_op (core, core->offset + core->print->cur, R_ANAL_OP_MASK_BASIC);
 				if (op) {
 					if (op->type == R_ANAL_OP_TYPE_JMP ||
 					op->type == R_ANAL_OP_TYPE_CJMP ||
@@ -2479,6 +2485,9 @@ R_API int r_core_visual_cmd(RCore *core, const char *arg) {
 			break;
 		case ')':
 			rotateAsmemu (core);
+			break;
+		case '#':
+			r_config_toggle (core->config, "asm.bytes");
 			break;
 		case '*':
 			if (core->print->cur_enabled) {

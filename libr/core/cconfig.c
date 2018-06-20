@@ -431,8 +431,8 @@ static int cb_asmarch(void *user, void *data) {
 		bits = core->anal->bits;
 	}
 	if (node->value[0] == '?') {
+		update_asmarch_options (core, node);
 		if (strlen (node->value) > 1 && node->value[1] == '?') {
-			update_asmarch_options (core, node);
 			/* print more verbose help instead of plain option values */
 			rasm2_list (core, NULL, node->value[1]);
 			return false;
@@ -584,12 +584,11 @@ static int cb_asmbits(void *user, void *data) {
 		ret = r_asm_set_bits (core->assembler, bits);
 		if (!ret) {
 			RAsmPlugin *h = core->assembler->cur;
-			if (h) {
-				eprintf ("Cannot set bits %d to '%s'\n", bits, h->name);
-			} else {
+			if (!h) {
 				eprintf ("e asm.bits: Cannot set value, no plugins defined yet\n");
 				ret = true;
 			}
+			// else { eprintf ("Cannot set bits %d to '%s'\n", bits, h->name); }
 		}
 		if (!r_anal_set_bits (core->anal, bits)) {
 			eprintf ("asm.arch: Cannot setup '%d' bits analysis engine\n", bits);
@@ -2426,7 +2425,8 @@ R_API int r_core_config_init(RCore *core) {
 	n = NODECB ("asm.os", R_SYS_OS, &cb_asmos);
 	SETDESC (n, "Select operating system (kernel)");
 	SETOPTIONS (n, "ios", "dos", "darwin", "linux", "freebsd", "openbsd", "netbsd", "windows", NULL);
-	SETI ("asm.maxrefs", 5,  "Maximum number of xrefs to be displayed as list (use columns above)");
+	SETI ("asm.xrefs.fold", 5,  "Maximum number of xrefs to be displayed as list (use columns above)");
+	SETI ("asm.xrefs.max", 20,  "Maximum number of xrefs to be displayed without folding");
 	SETCB ("asm.invhex", "false", &cb_asm_invhex, "Show invalid instructions as hexadecimal numbers");
 	SETPREF ("asm.meta", "true", "Display the code/data/format conversions in disasm");
 	SETPREF ("asm.bytes", "true", "Display the bytes of each instruction");
@@ -2477,6 +2477,7 @@ R_API int r_core_config_init(RCore *core) {
 	SETDESC (n, "Realign disassembly if there is a flag in the middle of an instruction");
 	SETPREF ("asm.lbytes", "true", "Align disasm bytes to left");
 	SETPREF ("asm.lines", "true", "Show ASCII-art lines at disassembly");
+	SETPREF ("asm.lines.bb", "true", "Show flow lines at jumps");
 	SETPREF ("asm.lines.call", "false", "Enable call lines");
 	SETPREF ("asm.lines.ret", "false", "Show separator lines after ret");
 	SETPREF ("asm.lines.out", "true", "Show out of block lines");
@@ -2719,7 +2720,6 @@ R_API int r_core_config_init(RCore *core) {
 
 
 	/* cmd */
-	r_config_desc (cfg, "cmd.graph", "Command executed by 'agv' command to view graphs");
 	SETPREF ("cmd.xterm", "xterm -bg black -fg gray -e", "xterm command to spawn with V@");
 	SETICB ("cmd.depth", 10, &cb_cmddepth, "Maximum command depth");
 	SETPREF ("cmd.bp", "", "Run when a breakpoint is hit");
@@ -2824,8 +2824,8 @@ R_API int r_core_config_init(RCore *core) {
 	SETPREF ("graph.font", "Courier", "Font for dot graphs");
 	SETPREF ("graph.offset", "false", "Show offsets in graphs");
 	SETPREF ("graph.web", "false", "Display graph in web browser (VV)");
-	SETI ("graph.from", UT64_MAX, "");
-	SETI ("graph.to", UT64_MAX, "");
+	SETI ("graph.from", UT64_MAX, "Lower bound address when drawing global graphs");
+	SETI ("graph.to", UT64_MAX, "Upper bound address when drawing global graphs");
 	SETI ("graph.scroll", 5, "Scroll speed in ascii-art graph");
 	SETPREF ("graph.invscroll", "false", "Invert scroll direction in ascii-art graph");
 	SETPREF ("graph.title", "", "Title of the graph");
@@ -2835,9 +2835,6 @@ R_API int r_core_config_init(RCore *core) {
 	SETPREF ("graph.gv.graph", "", "Graphviz global style attributes. (bgcolor=white)");
 	SETPREF ("graph.gv.current", "false", "Highlight the current node in graphviz graph.");
 	SETPREF ("graph.nodejmps", "true", "Enables shortcuts for every node.");
-	char *cmd = r_core_graph_cmd (core, "ag $$");
-	r_config_set (cfg, "cmd.graph", cmd);
-	free (cmd);
 
 	/* hud */
 	SETPREF ("hud.path", "", "Set a custom path for the HUD file");

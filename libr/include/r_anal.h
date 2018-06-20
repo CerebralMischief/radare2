@@ -460,8 +460,10 @@ typedef enum {
 } _RAnalOpType;
 
 typedef enum {
-	R_ANAL_OP_MASK_ESIL       = 1,
-	R_ANAL_OP_MASK_ALL        = R_ANAL_OP_MASK_ESIL
+	R_ANAL_OP_MASK_BASIC      = 0, // Just fills basic op info , it's fast
+	R_ANAL_OP_MASK_ESIL       = 1, // It fills RAnalop->esil info
+	R_ANAL_OP_MASK_VAL        = 2, // It fills RAnalop->dst/src info
+	R_ANAL_OP_MASK_ALL        = R_ANAL_OP_MASK_ESIL | R_ANAL_OP_MASK_VAL
 } RAnalOpMask;
 
 /* TODO: what to do with signed/unsigned conditionals? */
@@ -686,6 +688,7 @@ typedef struct r_anal_t {
 	RList /*RAnalRange*/ *bits_ranges;
 	RListComparator columnSort;
 	int stackptr;
+	bool fillval;
 	bool (*log)(struct r_anal_t *anal, const char *msg);
 	bool (*read_at)(struct r_anal_t *anal, ut64 addr, ut8 *buf, int len);
 	char *cmdtail;
@@ -704,6 +707,7 @@ typedef struct r_anal_hint_t {
 	ut64 ptr;
 	ut64 jump;
 	ut64 fail;
+	ut64 ret; // hint for function ret values
 	char *arch;
 	char *opcode;
 	char *syntax;
@@ -783,6 +787,7 @@ typedef struct r_anal_op_t {
 	int family;     /* family of opcode */
 	int id;         /* instruction id */
 	bool eob;       /* end of block (boolean) */
+	bool sign;      /* operates on signed values, false by default */
 	/* Run N instructions before executing the current one */
 	int delay;      /* delay N slots (mips, ..)*/
 	ut64 jump;      /* true jmp */
@@ -1229,6 +1234,8 @@ R_API void r_anal_type_add(RAnal *l, RAnalType *t);
 R_API RAnalType *r_anal_type_find(RAnal *a, const char* name);
 R_API void r_anal_type_list(RAnal *a, short category, short enabled);
 R_API RAnalType *r_anal_str_to_type(RAnal *a, const char* s);
+R_API bool r_anal_op_nonlinear(int t);
+R_API bool r_anal_op_ismemref(int t);
 R_API const char *r_anal_optype_to_string(int t);
 R_API const char *r_anal_op_family_to_string (int n);
 R_API int r_anal_op_family_from_string(const char *f);
@@ -1444,6 +1451,7 @@ R_API int r_anal_var_delete (RAnal *a, ut64 var_addr, const char kind, int scope
 R_API bool r_anal_var_delete_byname (RAnal *a, RAnalFunction *fcn, int type, const char *name);
 R_API bool r_anal_var_add (RAnal *a, ut64 addr, int scope, int delta, char kind, const char *type, int size, bool isarg, const char *name);
 R_API int r_anal_var_del(RAnal *anal, RAnalFunction *fcn, int delta, int scope);
+R_API ut64 r_anal_var_addr(RAnal *a, RAnalFunction *fcn, const char *name);
 R_API RAnalVar *r_anal_var_get (RAnal *a, ut64 addr, char kind, int scope, int index);
 R_API const char *r_anal_var_scope_to_str(RAnal *anal, int scope);
 R_API int r_anal_var_access_add(RAnal *anal, RAnalVar *var, ut64 from, int set);
@@ -1575,6 +1583,7 @@ R_API void r_anal_hint_set_size (RAnal *a, ut64 addr, int length);
 R_API void r_anal_hint_set_opcode (RAnal *a, ut64 addr, const char *str);
 R_API void r_anal_hint_set_esil (RAnal *a, ut64 addr, const char *str);
 R_API void r_anal_hint_set_pointer (RAnal *a, ut64 addr, ut64 jump);
+R_API void r_anal_hint_set_ret(RAnal *a, ut64 addr, ut64 val);
 R_API void r_anal_hint_set_high(RAnal *a, ut64 addr);
 R_API void r_anal_hint_unset_high(RAnal *a, ut64 addr);
 R_API void r_anal_hint_unset_size(RAnal *a, ut64 addr);
@@ -1584,6 +1593,7 @@ R_API void r_anal_hint_unset_opcode(RAnal *a, ut64 addr);
 R_API void r_anal_hint_unset_arch(RAnal *a, ut64 addr);
 R_API void r_anal_hint_unset_syntax(RAnal *a, ut64 addr);
 R_API void r_anal_hint_unset_pointer(RAnal *a, ut64 addr);
+R_API void r_anal_hint_unset_ret(RAnal *a, ut64 addr);
 R_API void r_anal_hint_unset_offset(RAnal *a, ut64 addr);
 R_API void r_anal_hint_unset_jump(RAnal *a, ut64 addr);
 R_API void r_anal_hint_unset_fail(RAnal *a, ut64 addr);

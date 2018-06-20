@@ -230,8 +230,8 @@ static void _print_strings(RCore *r, RList *list, int mode, int va) {
 		} else if (IS_MODE_JSON (mode)) {
 			int *block_list;
 			q = r_base64_encode_dyn (string->string, -1);
-			r_cons_printf ("%s{\"vaddr\":%"PFMT64d
-				",\"paddr\":%"PFMT64d",\"ordinal\":%d"
+			r_cons_printf ("%s{\"vaddr\":%"PFMT64u
+				",\"paddr\":%"PFMT64u",\"ordinal\":%d"
 				",\"size\":%d,\"length\":%d,\"section\":\"%s\","
 				"\"type\":\"%s\",\"string\":\"%s\"",
 				last_processed ? ",": "",
@@ -2079,12 +2079,13 @@ static char *build_hash_string(int mode, const char *chksum, ut8 *data, ut32 dat
 	return ret;
 }
 
-static int bin_sections(RCore *r, int mode, ut64 laddr, int va, ut64 at, const char *name, const char *chksum) {
+static int bin_sections(RCore *r, int mode, ut64 laddr, int va, ut64 at, const char *name, const char *chksum, bool print_segments) {
 	char *str = NULL;
 	RBinSection *section;
 	RBinInfo *info = NULL;
 	RList *sections;
 	RListIter *iter;
+	RListIter *last_processed = NULL;
 	int i = 0;
 	int fd = -1;
 	bool printHere = false;
@@ -2092,6 +2093,7 @@ static int bin_sections(RCore *r, int mode, ut64 laddr, int va, ut64 at, const c
 	bool inDebugger = r_config_get_i (r->config, "cfg.debug");
 	SdbHash *dup_chk_ht = ht_new (NULL, NULL, NULL);
 	bool ret = false;
+	const char *type = print_segments ? "segment" : "section";
 
 	if (!dup_chk_ht) {
 		return false;
@@ -2101,12 +2103,13 @@ static int bin_sections(RCore *r, int mode, ut64 laddr, int va, ut64 at, const c
 		printHere = true;
 	}
 	if (IS_MODE_JSON (mode) && !printHere) r_cons_printf ("[");
-	else if (IS_MODE_RAD (mode) && !at) r_cons_printf ("fs sections\n");
-	else if (IS_MODE_NORMAL (mode) && !at && !printHere) r_cons_printf ("[Sections]\n");
-	else if (IS_MODE_NORMAL (mode) && printHere) r_cons_printf("Current section\n");
+	else if (IS_MODE_RAD (mode) && !at) r_cons_printf ("fs %ss\n", type);
+	else if (IS_MODE_NORMAL (mode) && !at && !printHere) {
+		r_cons_printf ("[%s]\n", print_segments ? "Segments" : "Sections");
+	} else if (IS_MODE_NORMAL (mode) && printHere) r_cons_printf("Current section\n");
 	else if (IS_MODE_SET (mode)) {
 		fd = r_core_file_cur_fd (r);
-		r_flag_space_set (r->flags, "sections");
+		r_flag_space_set (r->flags, print_segments ? "segments" : "sections");
 	}
 	r_list_foreach (sections, iter, section) {
 		char perms[] = "----";
@@ -2129,6 +2132,10 @@ static int bin_sections(RCore *r, int mode, ut64 laddr, int va, ut64 at, const c
 
 		r_name_filter (section->name, sizeof (section->name));
 		if (at && (!section->size || !is_in_range (at, addr, section->size))) {
+			continue;
+		}
+
+		if (section->is_segment != print_segments) {
 			continue;
 		}
 
@@ -2163,18 +2170,18 @@ static int bin_sections(RCore *r, int mode, ut64 laddr, int va, ut64 at, const c
 				}
 			}
 			if (r->bin->prefix) {
-				str = r_str_newf ("%s.section.%s", r->bin->prefix, section->name);
+				str = r_str_newf ("%s.%s.%s", r->bin->prefix, type, section->name);
 			} else {
-				str = r_str_newf ("section.%s", section->name);
+				str = r_str_newf ("%s.%s", type, section->name);
 
 			}
 			r_flag_set (r->flags, str, addr, section->size);
 			R_FREE (str);
 
 			if (r->bin->prefix) {
-				str = r_str_newf ("%s.section_end.%s", r->bin->prefix, section->name);
+				str = r_str_newf ("%s.%s_end.%s", r->bin->prefix, type, section->name);
 			} else {
-				str = r_str_newf ("section_end.%s", section->name);
+				str = r_str_newf ("%s_end.%s", type, section->name);
 			}
 			r_flag_set (r->flags, str, addr + section->vsize, 0);
 			R_FREE (str);
@@ -2192,12 +2199,14 @@ static int bin_sections(RCore *r, int mode, ut64 laddr, int va, ut64 at, const c
 				}
 				//r_io_section_set_archbits (r->io, addr, arch, bits);
 			}
-			char *pfx = r->bin->prefix;
-			str = r_str_newf ("[%02d] %s section size %" PFMT64d" named %s%s%s",
-				i, perms, section->size,
-				pfx? pfx: "", pfx? ".": "", section->name);
-			r_meta_add (r->anal, R_META_TYPE_COMMENT, addr, addr, str);
-			R_FREE (str);
+			if (!section->is_segment) {
+				char *pfx = r->bin->prefix;
+				str = r_str_newf ("[%02d] %s %s size %" PFMT64d" named %s%s%s",
+				                  i, perms, type, section->size,
+				                  pfx? pfx: "", pfx? ".": "", section->name);
+				r_meta_add (r->anal, R_META_TYPE_COMMENT, addr, addr, str);
+				R_FREE (str);
+			}
 			if (section->add) {
 				str = r_str_newf ("%"PFMT64x".%"PFMT64x".%"PFMT64x".%"PFMT64x".%"PFMT32u".%s.%"PFMT32u".%d",
 					section->paddr, addr, section->size, section->vsize, section->srwx, section->name, r->bin->cur->id, fd);
@@ -2250,7 +2259,7 @@ static int bin_sections(RCore *r, int mode, ut64 laddr, int va, ut64 at, const c
 				"%s"
 				"\"paddr\":%"PFMT64d","
 				"\"vaddr\":%"PFMT64d"}",
-				(iter->p && !printHere)?",":"",
+				(last_processed && !printHere) ? "," : "",
 				section->name,
 				section->size,
 				section->vsize,
@@ -2290,23 +2299,23 @@ static int bin_sections(RCore *r, int mode, ut64 laddr, int va, ut64 at, const c
 					PFMT64x"\n", arch, bits, addr);
 			}
 			if (r->bin->prefix) {
-				r_cons_printf ("f %s.section.%s %"PFMT64d" 0x%08"PFMT64x"\n",
-						r->bin->prefix, section->name, section->size, addr);
-				r_cons_printf ("f %s.section_end.%s 1 0x%08"PFMT64x"\n",
-						r->bin->prefix, section->name, addr + section->vsize);
-				r_cons_printf ("CC section %i va=0x%08"PFMT64x" pa=0x%08"PFMT64x" sz=%"PFMT64d" vsz=%"PFMT64d" "
+				r_cons_printf ("f %s.%s.%s %"PFMT64d" 0x%08"PFMT64x"\n",
+						r->bin->prefix, type, section->name, section->size, addr);
+				r_cons_printf ("f %s.%s_end.%s 1 0x%08"PFMT64x"\n",
+						r->bin->prefix, type, section->name, addr + section->vsize);
+				r_cons_printf ("CC %s %i va=0x%08"PFMT64x" pa=0x%08"PFMT64x" sz=%"PFMT64d" vsz=%"PFMT64d" "
 						"rwx=%s %s.%s @ 0x%08"PFMT64x"\n",
-						i, addr, section->paddr, section->size, section->vsize,
+						type, i, addr, section->paddr, section->size, section->vsize,
 						perms, r->bin->prefix, section->name, addr);
 
 			} else {
-				r_cons_printf ("f section.%s %"PFMT64d" 0x%08"PFMT64x"\n",
-						section->name, section->size, addr);
-				r_cons_printf ("f section_end.%s 1 0x%08"PFMT64x"\n",
-						section->name, addr + section->vsize);
-				r_cons_printf ("CC section %i va=0x%08"PFMT64x" pa=0x%08"PFMT64x" sz=%"PFMT64d" vsz=%"PFMT64d" "
+				r_cons_printf ("f %s.%s %"PFMT64d" 0x%08"PFMT64x"\n",
+						type, section->name, section->size, addr);
+				r_cons_printf ("f %s_end.%s 1 0x%08"PFMT64x"\n",
+						type, section->name, addr + section->vsize);
+				r_cons_printf ("CC %s %i va=0x%08"PFMT64x" pa=0x%08"PFMT64x" sz=%"PFMT64d" vsz=%"PFMT64d" "
 						"rwx=%s %s @ 0x%08"PFMT64x"\n",
-						i, addr, section->paddr, section->size, section->vsize,
+						type, i, addr, section->paddr, section->size, section->vsize,
 						perms, section->name, addr);
 			}
 		} else {
@@ -2349,7 +2358,7 @@ static int bin_sections(RCore *r, int mode, ut64 laddr, int va, ut64 at, const c
 #endif
 				// r_cons_printf ("%02i 0x%08"PFMT64x" %10"PFMT64d" 0x%08"PFMT64x" %10"PFMT64d" "
 				r_cons_printf ("%02i 0x%08"PFMT64x" %5"PFMT64d" 0x%08"PFMT64x" %5"PFMT64d" "
-					"%s %s% %s.%s\n",
+					"%s %s%s%s.%s\n",
 					i, section->paddr, section->size, addr, section->vsize,
 					perms, str, hashstr ?hashstr : "", r->bin->prefix, section->name);
 			} else {
@@ -2368,6 +2377,7 @@ static int bin_sections(RCore *r, int mode, ut64 laddr, int va, ut64 at, const c
 			free (hashstr);
 		}
 		i++;
+		last_processed = iter;
 		if (printHere) {
 			break;
 		}
@@ -3340,7 +3350,8 @@ R_API int r_core_bin_info(RCore *core, int action, int mode, int va, RCoreBinFil
 	if ((action & R_CORE_BIN_ACC_PDB)) ret &= bin_pdb (core, mode);
 	if ((action & R_CORE_BIN_ACC_ENTRIES)) ret &= bin_entry (core, mode, loadaddr, va, false);
 	if ((action & R_CORE_BIN_ACC_INITFINI)) ret &= bin_entry (core, mode, loadaddr, va, true);
-	if ((action & R_CORE_BIN_ACC_SECTIONS)) ret &= bin_sections (core, mode, loadaddr, va, at, name, chksum);
+	if ((action & R_CORE_BIN_ACC_SECTIONS)) ret &= bin_sections (core, mode, loadaddr, va, at, name, chksum, false);
+	if ((action & R_CORE_BIN_ACC_SEGMENTS)) ret &= bin_sections (core, mode, loadaddr, va, at, name, chksum, true);
 	if (r_config_get_i (core->config, "bin.relocs")) {
 		if ((action & R_CORE_BIN_ACC_RELOCS)) ret &= bin_relocs (core, mode, va);
 	}

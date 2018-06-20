@@ -23,11 +23,12 @@ R_API RBinObject *r_bin_object_new(RBinFile *binfile, RBinPlugin *plugin, ut64 b
 	if (!o) {
 		return NULL;
 	}
-	//ut8 *bytes = calloc (80000, 1);
-	//r_buf_read_at (binfile->buf, 0, bytes, 80000);
 	o->obj_size = bytes && (bytes_sz >= sz + offset)? sz: 0;
 	o->boffset = offset;
-	o->id = r_num_rand (0xfffff000);
+	if (!r_id_pool_grab_id (binfile->rbin->ids->pool, &o->id)) {
+		free (o);
+		return NULL;
+	}
 	o->kv = sdb_new0 ();
 	o->baddr = baseaddr;
 	o->baddr_shift = 0;
@@ -203,7 +204,7 @@ R_API int r_bin_object_set_items(RBinFile *binfile, RBinObject *o) {
 		if (cp->strings) {
 			o->strings = cp->strings (binfile);
 		} else {
-			o->strings = r_bin_file_get_strings (binfile, minlen, 0);
+			o->strings = r_bin_file_get_strings (binfile, minlen, 0, binfile->rawstr);
 		}
 		if (bin->debase64) {
 			r_bin_object_filter_strings (o);

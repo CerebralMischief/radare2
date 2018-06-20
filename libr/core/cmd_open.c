@@ -378,10 +378,12 @@ static void cmd_open_bin(RCore *core, const char *input) {
 		r_core_cmd0 (core, ".is*");
 		break;
 	case 'f':
-		// TODO: specify path to file?
-		r_core_bin_load (core, NULL, UT64_MAX);
-		value = input[2] ? input + 2 : NULL;
-		// r2_obf (core, value);
+		if (input[2] == ' ') {
+			r_core_cmdf (core, "oba 0 %s", input + 3);
+		} else {
+			r_core_bin_load (core, NULL, UT64_MAX);
+			value = input[2] ? input + 2 : NULL;
+		}
 		break;
 	case 'o': // "obo"
 		value = input[2] ? input + 2 : NULL;
@@ -933,6 +935,20 @@ static bool desc_list_cb(void *user, void *data, ut32 id) {
 	return true;
 }
 
+static bool desc_list_json_cb(void *user, void *data, ut32 id) {
+	RPrint *p = (RPrint *)user;
+	RIODesc *desc = (RIODesc *)data;
+	// TODO: from is always 0? See libr/core/file.c:945
+	ut64 from = 0LL;
+	p->cb_printf ("{\"raised\":%s,\"fd\":%d,\"uri\":\"%s\",\"from\":%"
+			PFMT64d ",\"writable\":%s,\"size\":%" PFMT64d "}%s",
+			(desc->io && (desc->io->desc == desc)) ? "true" : "false",
+			desc->fd, desc->uri, from,
+			(desc->flags & R_IO_WRITE ? "true": "false"),
+			r_io_desc_size (desc), (desc->io->files->top_id == id) ? "" : ",");
+	return true;
+}
+
 static int cmd_open(void *data, const char *input) {
 	RCore *core = (RCore*)data;
 	int perms = R_IO_READ;
@@ -1209,7 +1225,9 @@ static int cmd_open(void *data, const char *input) {
 			r_core_cmd_help (core, help_msg_oj);
 			break;
 		}
-		r_core_file_list (core, (int)(*input));
+		core->print->cb_printf("[");
+		r_id_storage_foreach (core->io->files, desc_list_json_cb, core->print);
+		core->print->cb_printf("]\n");
 		break;
 	case 'L': // "oL"
 		if (r_sandbox_enable (0)) {
@@ -1324,7 +1342,6 @@ static int cmd_open(void *data, const char *input) {
 		case 0:
 		case '?':
 			r_core_cmd_help (core, help_msg_o_);
-			eprintf ("Usage: o-#, o-! or o-*, where # is the filedescriptor number\n");
 		}
 		break;
 	case '.': // "o."
@@ -1335,7 +1352,7 @@ static int cmd_open(void *data, const char *input) {
 			}
                         char *uri = r_str_newf ("malloc://%d", len);
 			ut8 *data = calloc (len, 1);
-			r_core_read_at (core, core->offset, data, len);
+			r_io_read_at (core->io, core->offset, data, len);
                         RIODesc *fd = r_io_open (core->io, uri, R_IO_READ | R_IO_WRITE, 0);
                         if (fd) {
                                 r_io_desc_write (fd, data, len);
