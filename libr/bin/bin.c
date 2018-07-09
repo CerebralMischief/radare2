@@ -168,6 +168,17 @@ R_API void r_bin_info_free(RBinInfo *rb) {
 	free (rb);
 }
 
+R_API RBinImport *r_bin_import_clone(RBinImport *o) {
+	RBinImport *res = r_mem_dup (o, sizeof (*o));
+	if (!res) {
+		return NULL;
+	}
+	res->name = R_STR_DUP (o->name);
+	res->classname = R_STR_DUP (o->classname);
+	res->descriptor = R_STR_DUP (o->descriptor);
+	return res;
+}
+
 R_API void r_bin_import_free(void *_imp) {
 	RBinImport *imp = (RBinImport *)_imp;
 	if (imp) {
@@ -178,11 +189,24 @@ R_API void r_bin_import_free(void *_imp) {
 	}
 }
 
+R_API RBinSymbol *r_bin_symbol_clone(RBinSymbol *o) {
+	RBinSymbol *res = r_mem_dup (o, sizeof (*o));
+	if (!res) {
+		return NULL;
+	}
+	res->name = R_STR_DUP (o->name);
+	res->dname = R_STR_DUP (o->dname);
+	res->classname = R_STR_DUP (o->classname);
+	return res;
+}
+
 R_API void r_bin_symbol_free(void *_sym) {
 	RBinSymbol *sym = (RBinSymbol *)_sym;
-	free (sym->name);
-	free (sym->classname);
-	free (sym);
+	if (sym) {
+		free (sym->name);
+		free (sym->classname);
+		free (sym);
+	}
 }
 
 R_API void r_bin_string_free(void *_str) {
@@ -459,13 +483,9 @@ R_API int r_bin_load_io_at_offset_as_sz(RBin *bin, int fd, ut64 baseaddr,
 		}
 	}
 	if (!binfile) {
-		if (true) {
-			binfile = r_bin_file_new_from_bytes (
-				bin, fname, buf_bytes, sz, file_sz, bin->rawstr,
-				baseaddr, loadaddr, fd, name, NULL, offset, true);
-		} else {
-			binfile = r_bin_file_new_from_fd (bin, tfd, NULL);
-		}
+		binfile = r_bin_file_new_from_bytes (
+			bin, fname, buf_bytes, sz, file_sz, bin->rawstr,
+			baseaddr, loadaddr, fd, name, NULL, offset, true);
 	}
 	return binfile? r_bin_file_set_cur_binfile (bin, binfile): false;
 }
@@ -1054,8 +1074,14 @@ R_API int r_bin_use_arch(RBin *bin, const char *arch, int bits, const char *name
 				bin->cur->curplugin = plugin;
 			}
 			binfile = r_bin_file_new (bin, "-", NULL, 0, 0, 0, 999, NULL, NULL, false);
+			if (!binfile) {
+				return false;
+			}
 			// create object and set arch/bits
 			obj = r_bin_object_new (binfile, plugin, 0, 0, 0, 1024);
+			if (!obj) {
+				return false;
+			}
 			binfile->o = obj;
 			obj->info = R_NEW0 (RBinInfo);
 			obj->info->arch = strdup (arch);

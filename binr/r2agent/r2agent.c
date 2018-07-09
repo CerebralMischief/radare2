@@ -91,13 +91,13 @@ int main(int argc, char **argv) {
 		r_socket_free (s);
 		return 1;
 	}
-	
+
 	eprintf ("http://localhost:%d/\n", s->port);
 	if (dosandbox && !r_sandbox_enable (true)) {
 		eprintf ("sandbox: Cannot be enabled.\n");
 		return 1;
 	}
-	while (!r_cons_singleton ()->breaked) {
+	while (!r_cons_singleton ()->context->breaked) {
 		char *result_heap = NULL;
 		const char *result = page_index;
 

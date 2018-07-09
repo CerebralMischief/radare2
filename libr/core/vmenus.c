@@ -2220,6 +2220,9 @@ static ut64 var_functions_show(RCore *core, int idx, int show) {
 	// Adjust the windows size automaticaly
 	(void)r_cons_get_size (&window);
 	window -= 8; // Size of printed things
+	bool color = r_config_get_i (core->config, "scr.color");
+	const char *color_addr = core->cons->pal.offset;
+	const char *color_fcn = core->cons->pal.fname;
 
 	r_list_foreach (core->anal->fcns, iter, fcn) {
 		if (i >= wdelta) {
@@ -2230,11 +2233,20 @@ static ut64 var_functions_show(RCore *core, int idx, int show) {
 			if (idx == i) {
 				addr = fcn->addr;
 			}
-			if (show)
-				r_cons_printf ("%c%c 0x%08"PFMT64x" %4d %s\n",
-					(seek == fcn->addr)?'>':' ',
-					(idx==i)?'*':' ',
-					fcn->addr, r_anal_fcn_realsize (fcn), fcn->name);
+			if (show) {
+				if (color) {
+					r_cons_printf ("%c%c %s0x%08"PFMT64x"" Color_RESET" %4d %s%s"Color_RESET"\n",
+							(seek == fcn->addr)?'>':' ',
+							(idx==i)?'*':' ',
+							color_addr, fcn->addr, r_anal_fcn_realsize (fcn),
+							color_fcn, fcn->name);
+				} else {
+					r_cons_printf ("%c%c 0x%08"PFMT64x" %4d %s\n",
+							(seek == fcn->addr)?'>':' ',
+							(idx==i)?'*':' ',
+							fcn->addr, r_anal_fcn_realsize (fcn), fcn->name);
+				}
+			}
 		}
 		i++;
 	}
@@ -2271,7 +2283,7 @@ static ut64 var_variables_show(RCore* core, int idx, int *vindex, int show) {
 			}
 			if (show) {
 				r_cons_printf ("%s%s %s %s @ %s%s0x%x\n",
-						i == *vindex ? "* ":"",
+						i == *vindex ? "* ":"  ",
 						var->kind=='v'?"var":"arg",
 						var->type, var->name,
 						core->anal->reg->name[R_REG_NAME_BP],
@@ -2287,10 +2299,15 @@ static ut64 var_variables_show(RCore* core, int idx, int *vindex, int show) {
 
 static int level = 0;
 static ut64 addr = 0;
+static st64 delta = 0;
 static int option = 0;
 static int variable_option = 0;
 static int printMode = 0;
-#define lastPrintMode 5
+static bool selectPanel = false;
+#define lastPrintMode 6
+static const char *cmd, *printCmds[lastPrintMode] = {
+	"pdf", "pd $r", "afi", "pdsf", "pdc", "pdr"
+};
 
 static void r_core_visual_anal_refresh_column (RCore *core, int colpos) {
 	const ut64 addr = (level != 0 && level != 1)
@@ -2299,43 +2316,35 @@ static void r_core_visual_anal_refresh_column (RCore *core, int colpos) {
 	// RAnalFunction* fcn = r_anal_get_fcn_in(core->anal, addr, R_ANAL_FCN_TYPE_NULL);
 	int h, w = r_cons_get_size (&h);
 	// int sz = (fcn)? R_MIN (r_anal_fcn_size (fcn), h * 15) : 16; // max instr is 15 bytes.
-	char *cmd_pds = r_str_newf ("pds %d", h * 6);
-	if (!cmd_pds) {
-		return;
-	}
 
-	const char *cmd, *printCmds[lastPrintMode] = {
-		"pdf", "afi", cmd_pds, "pdc", "pdr"
-	};
 	if (printMode > 0 && printMode < lastPrintMode) {
 		cmd = printCmds[printMode];
 	} else {
 		cmd = printCmds[printMode = 0];
 	}
-	char *cmdf = r_str_newf ("%s @ 0x%"PFMT64x, cmd, addr);
+	char *cmdf = r_str_newf ("%s @ 0x%"PFMT64x, cmd, addr + delta);
 	if (!cmdf) {
-		free (cmd_pds);
 		return;
 	}
 	char *output = r_core_cmd_str (core, cmdf);
 	if (output) {
 		// 'h - 2' because we have two new lines in r_cons_printf
 		char *out = r_str_ansi_crop (output, 0, 0, w - colpos, h - 2);
-		r_cons_printf ("Visual code review (%s)\n%s\n", cmd, out);
+		r_cons_printf ("\n%s\n", out);
 		free (out);
 		R_FREE (output);
 	}
-	free (cmd_pds);
 	free (cmdf);
 }
 
 static ut64 r_core_visual_anal_refresh (RCore *core) {
-	ut64 addr;
-	char old[1024];
-	int cols = r_cons_get_size (NULL);
 	if (!core) {
 		return 0LL;
 	}
+	ut64 addr;
+	char old[1024];
+	bool color = r_config_get_i (core->config, "scr.color");
+	int cols = r_cons_get_size (NULL);
 	old[0] = '\0';
 	addr = core->offset;
 	cols -= 50;
@@ -2344,7 +2353,6 @@ static ut64 r_core_visual_anal_refresh (RCore *core) {
 	}
 
 	r_cons_clear00 ();
-	r_cons_flush ();
 	r_core_visual_anal_refresh_column (core, cols);
 	if (cols > 30) {
 		r_cons_column (cols);
@@ -2352,10 +2360,21 @@ static ut64 r_core_visual_anal_refresh (RCore *core) {
 	switch (level) {
 	// Show functions list help in visual mode
 	case 0:
-		r_cons_printf ("-[ functions ]---------------- \n"
-			"(a) add     (x)xrefs     (q)quit \n"
-			"(r) rename  (c)calls     (g)go \n"
-			"(d) delete  (v)variables (?)help \n");
+		if (color) {
+			r_cons_strcat (core->cons->pal.prompt);
+		}
+		if (selectPanel) {
+			r_cons_printf ("-- functions -----------------[ %s ]-->>", printCmds[printMode]);
+		} else {
+			r_cons_printf ("-[ functions ]----------------- %s ---", printCmds[printMode]);
+		}
+		if (color) {
+			r_cons_strcat ("\n" Color_RESET);
+		}
+		r_cons_printf (
+			"(a) add     (x) xrefs  (q) quit  (jk) next/prev\n"
+			"(r) rename  (c) calls  (g) go    (tab) column\n"
+			"(d) delete  (v) vars   (?) help  (:)  enter cmd\n");
 		addr = var_functions_show (core, option, 1);
 		break;
 	case 1:
@@ -2389,8 +2408,7 @@ static ut64 r_core_visual_anal_refresh (RCore *core) {
 /* Like emenu but for real */
 R_API void r_core_visual_anal(RCore *core) {
 	char old[218];
-	int ch, _option = 0;
-	int nfcns = r_list_length (core->anal->fcns);
+	int nfcns, ch, _option = 0;
 	RConsEvent olde = core->cons->event_resize;
 	core->cons->event_resize = (RConsEvent) r_core_visual_anal_refresh;
 	core->cons->event_data = (void *) core;
@@ -2400,6 +2418,7 @@ R_API void r_core_visual_anal(RCore *core) {
 	int asmbytes = r_config_get_i (core->config, "asm.bytes");
 	r_config_set_i (core->config, "asm.bytes", 0);
 	for (;;) {
+		nfcns = r_list_length (core->anal->fcns);
 		addr = r_core_visual_anal_refresh (core);
 		ch = r_cons_readchar ();
 		if (ch == 4 || ch == -1) {
@@ -2412,21 +2431,35 @@ R_API void r_core_visual_anal(RCore *core) {
 		ch = r_cons_arrow_to_hjkl (ch); // get ESC+char, return 'hjkl' char
 		switch (ch) {
 		case '?':
-			r_cons_clear ();
+			r_cons_clear00 ();
 			r_cons_printf (
-				"Usage: Vv [\n"
+				"Usage: vv\n"
 				"Actions supported:\n"
 				" functions: Add, Modify, Delete, Xrefs Calls Vars\n"
 				" variables: Add, Modify, Delete\n"
-				"Moving:\n"
-				" j,k     select next/prev item\n"
-				" J,K     scroll next/prev page\n"
+				"Keys:\n"
+				" j,k     select next/prev item or scroll if tab pressed\n"
+				" J,K     scroll next/prev page \"\"\n"
 				" h,q     go back, quit\n"
 				" p,P     switch next/prev print mode\n"
-				" l,ret   enter, function\n"
+				" v       view selected function arguments and variables\n"
+				" x       see xrefs to the selected function\n"
+				" tab     toggle disasm column selection (to scroll in code)\n"
+				" !       run 'afls' to sort all functions by address\n"
+				" .       seek to current function address\n"
+				" :       run r2 commands\n"
+				" _       hud mode. same as: s $(afl~...)\n"
+				" enter   enter function view (variables), xrefs\n"
 			);
 			r_cons_flush ();
 			r_cons_any_key (NULL);
+			break;
+		case 9:
+			selectPanel = !selectPanel;
+			if (!selectPanel) {
+				delta = 0;
+				printMode = 0;
+			}
 			break;
 		case ':':
 			r_core_visual_prompt (core);
@@ -2491,6 +2524,12 @@ R_API void r_core_visual_anal(RCore *core) {
 				r_cons_show_cursor (false);
 			}
 			break;
+		case '.':
+			delta = 0;
+			break;
+		case 'R':
+			r_core_cmd0 (core, "ecn");
+			break;
 		case 'p':
 			printMode ++;
 			break;
@@ -2504,43 +2543,58 @@ R_API void r_core_visual_anal(RCore *core) {
 		case 'd':
 			switch (level) {
 			case 0:
-				eprintf ("TODO\n");
-				//data_del(addr, DATA_FUN, 0);
-				// XXX correcly remove all the data contained inside the size of the function
-				//flag_remove_at(addr);
+				r_core_cmdf (core, "af-0x%"PFMT64x, addr);
 				break;
 			}
 			break;
 		case 'x': level = 3; break;
 		case 'c': level = 2; break;
 		case 'v': level = 1; variable_option = 0; break;
+		case '_':
+			r_core_cmd0 (core, "s $(afl~...)");
+			break;
 		case 'j':
-			{
+			if (selectPanel) {
+				printMode = 1;
+				delta += 16;
+			} else {
+				delta = 0;
 				switch (level) {
-					case 1:
-						variable_option++;
-						break;
-					default:
-						option++;
-						if (option >= nfcns) --option;
+				case 1:
+					variable_option++;
+					break;
+				default:
+					option++;
+					if (option >= nfcns) --option;
+					break;
 				}
 			}
 			break;
+		case '!':
+			r_core_cmd0 (core, "afls");
+			break;
 		case 'k':
-			{
+			if (selectPanel) {
+				printMode = 1;
+				delta -= 16;
+			} else {
+				delta = 0;
 				switch (level) {
-					case 1:
-						variable_option = (variable_option<=0)? 0: variable_option-1;
-						break;
-					default:
-						option = (option<=0)? 0: option-1;
-						break;
+				case 1:
+					variable_option = (variable_option<=0)? 0: variable_option-1;
+					break;
+				default:
+					option = (option<=0)? 0: option-1;
+					break;
 				}
 			}
 
 			break;
 		case 'J':
-			{
+			if (selectPanel) {
+				printMode = 1;
+				delta += 40;
+			} else {
 				int rows = 0;
 				r_cons_get_size (&rows);
 				option += (rows - 5);
@@ -2550,7 +2604,10 @@ R_API void r_core_visual_anal(RCore *core) {
 			}
 			break;
 		case 'K':
-			{
+			if (selectPanel) {
+				printMode = 1;
+				delta -= 40;
+			} else {
 				int rows = 0;
 				r_cons_get_size (&rows);
 				option -= (rows - 5);
@@ -2563,6 +2620,12 @@ R_API void r_core_visual_anal(RCore *core) {
 			r_core_seek (core, addr, SEEK_SET);
 			goto beach;
 		case ' ':
+		case '\r':
+		case '\n':
+			level = 0;
+			r_core_seek (core, addr, SEEK_SET);
+			goto beach;
+			break;
 		case 'l':
 			level = 1;
 			_option = option;

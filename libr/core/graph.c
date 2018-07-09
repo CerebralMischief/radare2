@@ -32,7 +32,7 @@ static const char *mousemodes[] = {
 #define PAGEKEY_SPEED (h / 2)
 /* 15 */
 #define MINIGRAPH_NODE_TEXT_CUR "<@@@@@@>"
-#define MINIGRAPH_NODE_MIN_WIDTH 8
+#define MINIGRAPH_NODE_MIN_WIDTH 12
 #define MINIGRAPH_NODE_TITLE_LEN 4
 #define MINIGRAPH_NODE_CENTER_X 3
 #define MININODE_MIN_WIDTH 16
@@ -231,6 +231,18 @@ static void update_node_dimension(const RGraph *g, int is_mini, int zoom, int ed
 	}
 }
 
+static void append_shortcut (const RAGraph *g, char *title, char *nodetitle, int left) {
+	char *shortcut = sdb_get (g->db, sdb_fmt ("agraph.nodes.%s.shortcut", nodetitle), 0);
+	if (shortcut) {
+		if (g->can->color) {
+			strncat (title, sdb_fmt ("\x1b[33m[g%s]",  shortcut), left);
+		} else {
+			strncat (title, sdb_fmt ("[g%s]", shortcut), left);
+		}
+		free (shortcut);
+	}
+}
+
 static void mini_RANode_print(const RAGraph *g, const RANode *n, int cur, bool details) {
 	char title[TITLE_LEN];
 	int x, delta_x = 0;
@@ -273,8 +285,13 @@ static void mini_RANode_print(const RAGraph *g, const RANode *n, int cur, bool d
 					str += l - MINIGRAPH_NODE_TITLE_LEN;
 				}
 			}
-			snprintf (title, sizeof (title) - 1, "__%s__", str);
-			W (title + delta_x);
+			if (g->can->color) {
+				snprintf (title, sizeof (title) - 1, "%s__%s__", Color_RESET, str);
+			} else {
+				snprintf (title, sizeof (title) - 1, "__%s__", str);
+			}
+			append_shortcut (g, title, n->title, sizeof (title) - strlen (title) - 1);
+			W (r_str_ansi_crop (title, delta_x, 0, 20, 1));
 		}
 	} else {
 		snprintf (title, sizeof (title) - 1,
@@ -300,7 +317,6 @@ static void normal_RANode_print(const RAGraph *g, const RANode *n, int cur) {
 	char title[TITLE_LEN];
 	char *body;
 	int x, y;
-	char *shortcut;
 
 	x = n->x + g->can->sx;
 	y = n->y + g->can->sy;
@@ -313,19 +329,18 @@ static void normal_RANode_print(const RAGraph *g, const RANode *n, int cur) {
 	if (y < -1) {
 		delta_y = R_MIN (n->h - BORDER_HEIGHT - 1, -y - MARGIN_TEXT_Y);
 	}
-	shortcut = sdb_get (g->db, sdb_fmt ("agraph.nodes.%s.shortcut", n->title), 0);
 	/* print the title */
 	if (cur) {
 		snprintf (title, sizeof (title) - 1, "[%s]", n->title);
 	} else {
-		snprintf (title, sizeof (title) - 1, " %s", n->title);
-	}
-	if (shortcut) {
-		strncat (title, sdb_fmt (" ;[g%s]", shortcut), sizeof (title) - strlen (title) - 1);
-		free (shortcut);
+		char *color = g->can->color ? Color_RESET : "";
+		snprintf (title, sizeof (title) - 1, " %s%s ", color, n->title);
+		append_shortcut (g, title, n->title, sizeof (title) - strlen (title) - 1);
 	}
 	if ((delta_x < strlen (title)) && G (n->x + MARGIN_TEXT_X + delta_x, n->y + 1)) {
-		W (title + delta_x);
+		char *res = r_str_ansi_crop (title, delta_x, 0, n->w - BORDER_WIDTH, 1);
+		W (res);
+		free (res);
 	}
 
 	/* print the body */
@@ -2641,6 +2656,26 @@ static void agraph_print_edges_simple(RAGraph *g) {
 	}
 }
 
+static int first_x_cmp (const void *_a, const void *_b) {
+	RGraphNode *ga = (RGraphNode *)_a;
+	RGraphNode *gb = (RGraphNode *)_b;
+	RANode *a = (RANode*) ga->data;
+	RANode *b = (RANode*) gb->data;
+	if (b->y < a->y) {
+		return -1;
+	}
+	if (b->y > a->y) {
+		return 1;
+	}
+	if (a->x < b->x) {
+		return 1;
+	}
+	if (a->x > b->x) {
+		return -1;
+	}
+	return 0;
+}
+
 static void agraph_print_edges(RAGraph *g) {
 	if (!g->edgemode) {
 		return;
@@ -2649,7 +2684,7 @@ static void agraph_print_edges(RAGraph *g) {
 		agraph_print_edges_simple (g);
 		return;
 	}
-	int out_nth, in_nth;
+	int out_nth, in_nth, bendpoint;
 	RListIter *itn, *itm, *ito;
 	RCanvasLineStyle style = {0};
 	const RList *nodes = r_graph_get_nodes (g->graph);
@@ -2663,7 +2698,7 @@ static void agraph_print_edges(RAGraph *g) {
 	graph_foreach_anode (nodes, itm, ga, a) {
 		const RGraphNode *gb;
 		RANode *b;
-		const RList *neighbours = r_graph_get_neighbours (g->graph, ga);
+		RList *neighbours = (RList *)r_graph_get_neighbours (g->graph, ga);
 		int ax, ay, bx, by, a_x_inc, b_x_inc;
 		tl = tm = NULL;
 
@@ -2690,7 +2725,7 @@ static void agraph_print_edges(RAGraph *g) {
 		}
 
 		if (!tm) {
-			tm = calloc (1, sizeof (struct tmplayer));
+			tm = R_NEW0 (struct tmplayer);
 			if (tm) {
 				tm->layer = a->layer;
 				tm->edgectr = 0;
@@ -2706,13 +2741,27 @@ static void agraph_print_edges(RAGraph *g) {
 			}
 		}
 
-
 		bool many = r_list_length (neighbours) > 2;
+
+		if (many && !g->is_callgraph) {
+			ga->out_nodes->sorted = false;
+			r_list_sort (neighbours, first_x_cmp);
+		}
+
 		graph_foreach_anode (neighbours, itn, gb, b) {
 			out_nth = get_edge_number (g, a, b, true);
 			in_nth = get_edge_number (g, a, b, false);
 
-			if (many) {
+			bool parent_many = false;
+			if (a->is_dummy) {
+				RANode *in = (RANode *) (((RGraphNode *)r_list_first (ga->in_nodes))->data);
+				while (in && in->is_dummy) {
+					in = (RANode *) (((RGraphNode *)r_list_first ((in->gnode)->in_nodes))->data);
+				}
+				parent_many = r_list_length ((in->gnode)->out_nodes) > 2;
+			}
+
+			if (many || parent_many) {
 				style.color = LINE_UNCJMP;
 			} else {
 				switch (out_nth) {
@@ -2739,15 +2788,22 @@ static void agraph_print_edges(RAGraph *g) {
 				a_x_inc = R_EDGES_X_INC + 2 * (out_nth + 1);
 				b_x_inc = R_EDGES_X_INC + 2 * (in_nth + 1);
 
-				ax = a->is_dummy ? a->x : (a->x + a->w - a_x_inc);
-				ay = a->y + a->h;
-
 				bx = b->is_dummy ? b->x : (b->x + b_x_inc);
+				ay = a->y + a->h;
 				by = b->y - 1;
+
+				if (many && !g->is_callgraph) {
+					int t = R_EDGES_X_INC + 2 * (neighbours->length + 1);
+					ax = a->is_dummy ? a->x : (a->x + a->w/2 + (t/2 - a_x_inc));
+					bendpoint = bx < ax ? neighbours->length - out_nth :  out_nth;
+				} else {
+					ax = a->is_dummy ? a->x : (a->x + a_x_inc);
+					bendpoint = tm->edgectr;
+				}
 
 				if (!a->is_dummy && itn == neighbours->head && out_nth == 0 && bx > ax) {
 					a_x_inc += 4;
-					ax -= 4;
+					ax += (many && !g->is_callgraph) ? 0 : 4;
 				}
 				if (a->h < a->layer_height) {
 					r_cons_canvas_line (g->can, ax, ay, ax, ay + a->layer_height - a->h, &style);
@@ -2755,14 +2811,14 @@ static void agraph_print_edges(RAGraph *g) {
 					style.symbol = LINE_NOSYM_VERT;
 				}
 				if (by >= ay) {
-					r_cons_canvas_line_square_defined (g->can, ax, ay, bx, by, &style, tm->edgectr, true);
+					r_cons_canvas_line_square_defined (g->can, ax, ay, bx, by, &style, bendpoint, true);
 				} else {
 					struct tmpbackedgeinfo *tmp = calloc (1, sizeof (struct tmpbackedgeinfo));
 					tmp->ax = ax;
 					tmp->bx = bx;
 					tmp->ay = ay;
 					tmp->by = by;
-					tmp->edgectr = tm->edgectr;
+					tmp->edgectr = bendpoint;
 					tmp->fromlayer = a->layer;
 					tmp->tolayer = b->layer;
 					tmp->style = style;
@@ -4043,13 +4099,13 @@ R_API int r_core_visual_graph(RCore *core, RAGraph *g, RAnalFunction *_fcn, int 
 			r_core_cmd (core, "sr PC", 0);
 			break;
 		case 'R':
-			if (!fcn) {
-				break;
-			}
 			if (r_config_get_i (core->config, "scr.randpal")) {
 				r_core_cmd0 (core, "ecr");
 			} else {
 				r_core_cmd0 (core, "ecn");
+			}
+			if (!fcn) {
+				break;
 			}
 			g->edgemode = r_config_get_i (core->config, "graph.edges");
 			get_bbupdate (g, core, fcn);

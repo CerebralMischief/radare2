@@ -216,7 +216,7 @@ static const char *help_msg_af[] = {
 	"aff", "", "re-adjust function boundaries to fit",
 	"afF", "[1|0|]", "fold/unfold/toggle",
 	"afi", " [addr|fcn.name]", "show function(s) information (verbose afl)",
-	"afl", "[?] [l*] [fcn name]", "list functions (addr, size, bbs, name) (see afll)",
+	"afl", "[?] [ls*] [fcn name]", "list functions (addr, size, bbs, name) (see afll)",
 	"afm", " name", "merge two functions",
 	"afM", " name", "print functions map",
 	"afn", "[?] name [addr]", "rename name for function at address (change flag too)",
@@ -279,13 +279,14 @@ static const char *help_msg_afi[] = {
 static const char *help_msg_afl[] = {
 	"Usage:", "afl", " List all functions",
 	"afl", "", "list functions",
+	"afl+", "", "display sum all function sizes",
 	"aflc", "", "count of functions",
 	"aflj", "", "list functions in json",
 	"afll", "", "list functions in verbose mode",
 	"afllj", "", "list functions in verbose mode (alias to aflj)",
 	"aflq", "", "list functions in quiet mode",
 	"aflqj", "", "list functions in json quiet mode",
-	"afls", "", "print sum of sizes of all functions",
+	"afls", "", "sort function list by address",
 	NULL
 };
 
@@ -494,6 +495,7 @@ static const char *help_msg_ar[] = {
 	"ar", " <type>", "Show all registers of given type",
 	"arC", "", "Display register profile comments",
 	"arr", "", "Show register references (telescoping)",
+	"arrj", "", "Show register references (telescoping) in JSON format",
 	"ar=", "([size])(:[regs])", "Show register values in columns",
 	"ar?", " <reg>", "Show register value",
 	"arb", " <type>", "Display hexdump of the given arena",
@@ -606,6 +608,11 @@ static void cmd_anal_init(RCore *core) {
 	DEFINE_CMD_DESCRIPTOR (core, ax);
 }
 
+static int cmpaddr (const void *_a, const void *_b) {
+	const RAnalFunction *a = _a, *b = _b;
+	return a->addr - b->addr;
+}
+
 static int listOpDescriptions(void *_core, const char *k, const char *v) {
         r_cons_printf ("%s=%s\n", k, v);
         return 1;
@@ -667,7 +674,8 @@ static void type_cmd(RCore *core, const char *input) {
 		r_core_cmd0 (core, "aei");
 		r_core_cmd0 (core, "aeim");
 		r_reg_arena_push (core->anal->reg);
-		r_list_foreach (core->anal->fcns, it, fcn) {
+		// Iterating Reverse so that we get function in top-bottom call order
+		r_list_foreach_prev (core->anal->fcns, it, fcn) {
 			int ret = r_core_seek (core, fcn->addr, true);
 			if (!ret) {
 				continue;
@@ -948,7 +956,7 @@ static int var_cmd(RCore *core, const char *str) {
 		r_anal_var_delete_all (core->anal, fcn->addr, R_ANAL_VAR_KIND_REG);
 		r_anal_var_delete_all (core->anal, fcn->addr, R_ANAL_VAR_KIND_BPV);
 		r_anal_var_delete_all (core->anal, fcn->addr, R_ANAL_VAR_KIND_SPV);
-		fcn_callconv (core, fcn);
+		r_core_recover_vars (core, fcn, false);
 		free (p);
 		return true;
 	case 'n':
@@ -1103,6 +1111,7 @@ static int var_cmd(RCore *core, const char *str) {
 	case ' ': {
 		const char *name;
 		char *vartype;
+		bool isarg = false;
 		int size = 4;
 		int scope = 1;
 		for (str++; *str == ' ';) str++;
@@ -1119,19 +1128,29 @@ static int var_cmd(RCore *core, const char *str) {
 				break;
 			}
 			delta = i->index;
+			isarg = true;
 		} else {
 			delta = r_num_math (core->num, str);
 		}
 		name = p;
-		vartype = strchr (name, ' ');
-		if (vartype) {
-			*vartype++ = 0;
-			r_anal_var_add (core->anal, fcn->addr,
-					scope, delta, type,
-					vartype, size, 0, name);
-		} else {
+		if (!name) {
 			eprintf ("Missing name\n");
+			break;
 		}
+		vartype = strchr (name, ' ');
+		if (!vartype) {
+			vartype = "int";
+		} else {
+			*vartype++ = 0;
+		}
+		if ((type == 'b') && delta > 0) {
+			isarg = true;
+		} else if ((type == 's') && delta > fcn->maxstack) {
+			isarg = true;
+		}
+		r_anal_var_add (core->anal, fcn->addr,scope,
+				delta, type, vartype,
+				size, isarg, name);
 		}
 		break;
 	};
@@ -2254,6 +2273,9 @@ static int cmd_anal_fcn(RCore *core, const char *input) {
 		case '?':
 			r_core_cmd_help (core, help_msg_afl);
 			break;
+		case 's': // "afls"
+			r_list_sort (core->anal->fcns, cmpaddr);
+			break;
 		case 'l': // "afll"
 			if (input[3] == '?') {
 				// TODO #7967 help refactor
@@ -2264,7 +2286,7 @@ static int cmd_anal_fcn(RCore *core, const char *input) {
 			/* fallthrough */
 		case 'j': // "aflj"
 		case 'q': // "aflq"
-		case 's': // "afls"
+		case '+': // "afl+"
 		case '*': // "afl*"
 			r_core_anal_fcn_list (core, NULL, input + 2);
 			break;
@@ -2280,7 +2302,7 @@ static int cmd_anal_fcn(RCore *core, const char *input) {
 		{
 		ut64 addr;
 		RAnalFunction *f;
-		const char *arg = input + 3;
+		const char *arg = input + 2;
 		if (input[2] && (addr = r_num_math (core->num, arg))) {
 			arg = strchr (arg, ' ');
 			if (arg) {
@@ -2677,6 +2699,8 @@ static int cmd_anal_fcn(RCore *core, const char *input) {
 		int depth = r_config_get_i (core->config, "anal.depth");
 		bool analyze_recursively = r_config_get_i (core->config, "anal.calls");
 		RAnalFunction *fcn;
+		RAnalFunction *fcni;
+		RListIter *iter;
 		ut64 addr = core->offset;
 		if (input[1] == 'r') {
 			input++;
@@ -2757,12 +2781,19 @@ static int cmd_anal_fcn(RCore *core, const char *input) {
 				r_list_free (refs);
 			}
 		}
-
 		if (name) {
 			if (*name && !setFunctionName (core, addr, name, true)) {
 				eprintf ("Cannot find function '%s' at 0x%08" PFMT64x "\n", name, (ut64)addr);
 			}
 			free (name);
+		}
+		if (core->anal->opt.vars) {
+			r_list_foreach (core->anal->fcns, iter, fcni) {
+				if (r_cons_is_breaked ()) {
+					break;
+				}
+				r_core_recover_vars (core, fcni, true);
+			}
 		}
 		flag_every_function (core);
 	}
@@ -2932,7 +2963,14 @@ void cmd_anal_reg(RCore *core, const char *str) {
 		}
 		break;
 	case 'r': // "arr"
-		r_core_debug_rr (core, core->anal->reg);
+		switch (str[1]) {
+		case 'j': // "arrj"
+			r_core_debug_rr (core, core->dbg->reg, 'j');
+			break;
+		default:
+			r_core_debug_rr (core, core->dbg->reg, 0);
+			break;
+		}
 		break;
 	case 'S': { // "arS"
 		int sz;
@@ -6764,9 +6802,23 @@ static int cmd_anal_all(RCore *core, const char *input) {
 					r_core_anal_autoname_all_fcns (core);
 					rowlog_done (core);
 				}
+				if (core->anal->opt.vars) {
+					RAnalFunction *fcni;
+					RListIter *iter;
+					r_list_foreach (core->anal->fcns, iter, fcni) {
+						if (r_cons_is_breaked ()) {
+							break;
+						}
+						RList *list = r_anal_var_list (core->anal, fcni, 'r');
+						if (!r_list_empty (list)) {
+							r_list_free (list);
+							continue;
+						}
+						//extract only reg based var here
+						r_core_recover_vars (core, fcni, true);
+					}
+				}
 				if (input[1] == 'a') { // "aaaa"
-					bool ioCache = r_config_get_i (core->config, "io.pcache");
-					r_config_set_i (core->config, "io.pcache", 1);
 					if (sdb_count (core->anal->sdb_zigns) > 0) {
 						rowlog (core, "Check for zignature from zigns folder (z/)");
 						r_core_cmd0 (core, "z/");
@@ -6774,10 +6826,6 @@ static int cmd_anal_all(RCore *core, const char *input) {
 					rowlog (core, "Type matching analysis for all functions (afta)");
 					r_core_cmd0 (core, "afta");
 					rowlog_done (core);
-					if (!ioCache) {
-						r_core_cmd0 (core, "wc-*");
-					}
-					r_config_set_i (core->config, "io.pcache", ioCache);
 				}
 				r_core_cmd0 (core, "s-");
 				if (dh_orig) {
@@ -6887,11 +6935,6 @@ static bool anal_fcn_data (RCore *core, const char *input) {
 		return true;
 	}
 	return false;
-}
-
-static int cmpaddr (const void *_a, const void *_b) {
-	const RAnalFunction *a = _a, *b = _b;
-	return a->addr - b->addr;
 }
 
 static bool anal_fcn_data_gaps (RCore *core, const char *input) {

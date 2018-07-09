@@ -4,6 +4,7 @@
 
 // maybe too big sometimes? 2KB of stack eaten here..
 #define R_STRING_SCAN_BUFFER_SIZE 2048
+#define R_STRING_MAX_UNI_BLOCKS 4
 
 static void print_string(RBinString *string, RBinFile *bf) {
 	if (!string || !bf) {
@@ -25,7 +26,7 @@ static void print_string(RBinString *string, RBinFile *bf) {
 	type_string = r_bin_string_type (string->type);
 	vaddr = addr = r_bin_get_vaddr (bin, string->paddr, string->vaddr);
 
-	switch(mode) {
+	switch (mode) {
 	case MODE_SIMPLE :
 		io->cb_printf ("0x%08" PFMT64x " %s\n", addr, string->string);
 		break;
@@ -79,6 +80,7 @@ static int string_scan_range(RList *list, RBinFile *bf, int min,
 	int len = to - from;
 	ut8 *buf = calloc (len, 1);
 	if (!buf || !min) {
+		free (buf);
 		return -1;
 	}
 	r_buf_read_at (bf->buf, from, buf, len);
@@ -168,9 +170,9 @@ static int string_scan_range(RList *list, RBinFile *bf, int min,
 		tmp[i++] = '\0';
 
 		if (runes >= min) {
+			// reduce false positives
+			int j, num_blocks, *block_list;
 			if (str_type == R_STRING_TYPE_ASCII) {
-				// reduce false positives
-				int j;
 				for (j = 0; j < i; j++) {
 					char ch = tmp[j];
 					if (ch != '\n' && ch != '\r' && ch != '\t') {
@@ -178,6 +180,22 @@ static int string_scan_range(RList *list, RBinFile *bf, int min,
 							continue;
 						}
 					}
+				}
+			}
+			switch (str_type) {
+			case R_STRING_TYPE_UTF8:
+			case R_STRING_TYPE_WIDE:
+			case R_STRING_TYPE_WIDE32:
+				num_blocks = 0;
+				block_list = r_utf_block_list ((const ut8*)tmp, i - 1);
+				if (block_list) {
+					for (j = 0; block_list[j] != -1; j++) {
+						num_blocks++;
+					}
+				}
+				free (block_list);
+				if (num_blocks > R_STRING_MAX_UNI_BLOCKS) {
+					continue;
 				}
 			}
 			RBinString *bs = R_NEW0 (RBinString);
@@ -418,7 +436,7 @@ int file_sz = 0;
 		}
 		if (!plugin) {
 			ut8 bytes[1024];
-			int sz = 1024;
+			int sz = sizeof (bytes);
 			r_buf_read_at (bf->buf, 0, bytes, sz);
 			plugin = r_bin_get_binplugin_by_bytes (bin, bytes, sz);
 			if (!plugin) {
@@ -838,7 +856,7 @@ R_API RBinFile *r_bin_file_xtr_load_bytes(RBin *bin, RBinXtrPlugin *xtr, const c
 }
 
 #define LIMIT_SIZE 0
-R_API int r_bin_file_set_bytes(RBinFile *binfile, const ut8 *bytes, ut64 sz, bool steal_ptr) {
+R_API bool r_bin_file_set_bytes(RBinFile *binfile, const ut8 *bytes, ut64 sz, bool steal_ptr) {
 	if (!binfile) {
 		return false;
 	}

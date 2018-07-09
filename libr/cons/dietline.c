@@ -34,7 +34,7 @@ static inline bool is_word_break_char(char ch) {
 
 /* https://www.gnu.org/software/bash/manual/html_node/Commands-For-Killing.html */
 static void backward_kill_word() {
-	int i;
+	int i, len;
 	if (I.buffer.index > 0) {
 		for (i = I.buffer.index - 1; i > 0 && is_word_break_char (I.buffer.data[i]); i--) {
 			/* Move the cursor index back until we hit a non-word-break-character */
@@ -50,10 +50,43 @@ static void backward_kill_word() {
 		if (I.buffer.index > I.buffer.length) {
 			I.buffer.length = I.buffer.index;
 		}
+		len = I.buffer.index - i + 1;
+		free (I.clipboard);
+		I.clipboard = r_str_ndup (I.buffer.data + i, len);
 		memmove (I.buffer.data + i, I.buffer.data + I.buffer.index,
 				I.buffer.length - I.buffer.index + 1);
 		I.buffer.length = strlen (I.buffer.data);
 		I.buffer.index = i;
+	}
+}
+
+static void kill_word() {
+	int i, len;
+	for (i = I.buffer.index + 1; i < I.buffer.length && is_word_break_char (I.buffer.data[i]); i++) {
+		/* Move the cursor index forward until we hit a non-word-break-character */
+	}
+	for (; i < I.buffer.length && !is_word_break_char (I.buffer.data[i]); i++) {
+		/* Move the cursor index forward we hit a word-break-character */
+	}
+	if (I.buffer.index >= I.buffer.length) {
+		I.buffer.length = I.buffer.index;
+	}
+	len = i - I.buffer.index + 1;
+	free (I.clipboard);
+	I.clipboard = r_str_ndup (I.buffer.data + I.buffer.index, len);
+	memmove (I.buffer.data + I.buffer.index, I.buffer.data + i, len);
+	I.buffer.length = strlen (I.buffer.data);
+}
+
+static void paste() {
+	if (I.clipboard) {
+		char *cursor = I.buffer.data + I.buffer.index;
+		int dist = (I.buffer.data + I.buffer.length) - cursor;
+		int len = strlen (I.clipboard);
+		I.buffer.length += len;
+		memmove (cursor + len, cursor, dist);
+		memcpy (cursor, I.clipboard, len);
+		I.buffer.index += len;
 	}
 }
 
@@ -155,7 +188,7 @@ static int r_line_readchar_utf8(ut8 *s, int slen) {
 
 #if __WINDOWS__ && !__CYGWIN__
 static int r_line_readchar_win(int *vch) { // this function handle the input in console mode
-	INPUT_RECORD irInBuf[128];
+	INPUT_RECORD irInBuf;
 	BOOL ret, bCtrl = FALSE;
 	DWORD mode, out;
 	ut8 buf[2];
@@ -175,44 +208,42 @@ static int r_line_readchar_win(int *vch) { // this function handle the input in 
 	}
 
 	*buf = '\0';
-do_it_again:
+
 	h = GetStdHandle (STD_INPUT_HANDLE);
 	GetConsoleMode (h, &mode);
 	SetConsoleMode (h, 0);	// RAW
+do_it_again:
 	*vch = 0;
 	bed = r_cons_sleep_begin ();
-	ret = ReadConsoleInput (h, irInBuf, 128, &out);
+	ret = ReadConsoleInput (h, &irInBuf, 1, &out);
 	r_cons_sleep_end (bed);
 	if (ret < 1) {
 		return 0;
 	}
-	for (i = 0; i < out; i++) {
-		if (irInBuf[i].EventType != KEY_EVENT) {
-			continue;
-		}
-		if (!irInBuf[i].Event.KeyEvent.bKeyDown) {
-			continue;
-		}
-		*buf = irInBuf[i].Event.KeyEvent.uChar.AsciiChar;
-		bCtrl = irInBuf[i].Event.KeyEvent.dwControlKeyState & 8;
-		if (irInBuf[i].Event.KeyEvent.uChar.AsciiChar) {
-			continue;
-		}
-		switch (irInBuf[i].Event.KeyEvent.wVirtualKeyCode) {
-		case VK_DOWN: *vch = bCtrl? 140: 40; break;
-		case VK_UP: *vch = bCtrl? 138: 38; break;
-		case VK_RIGHT: *vch = bCtrl? 139: 39; break;
-		case VK_LEFT: *vch = bCtrl? 137: 37; break;
-		case 46: *vch = bCtrl? 146: 46; break;	// SUPR KEY
-		case VK_PRIOR: *vch = bCtrl? 136: 36; break;	// HOME KEY
-		case VK_NEXT: *vch = bCtrl? 135: 35; break;	// END KEY
-		default: *vch = *buf = 0; break;
+	if (irInBuf.EventType == KEY_EVENT) {
+		if (irInBuf.Event.KeyEvent.bKeyDown) {
+			if (irInBuf.Event.KeyEvent.uChar.AsciiChar) {
+				*buf = irInBuf.Event.KeyEvent.uChar.AsciiChar;
+				bCtrl = irInBuf.Event.KeyEvent.dwControlKeyState & 8;
+			}
+			else {
+				switch (irInBuf.Event.KeyEvent.wVirtualKeyCode) {
+				case VK_DOWN: *vch = bCtrl ? 140 : 40; break;
+				case VK_UP: *vch = bCtrl ? 138 : 38; break;
+				case VK_RIGHT: *vch = bCtrl ? 139 : 39; break;
+				case VK_LEFT: *vch = bCtrl ? 137 : 37; break;
+				case VK_DELETE: *vch = bCtrl ? 146 : 46; break;	// SUPR KEY
+				case VK_HOME: *vch = bCtrl ? 136 : 36; break;	// HOME KEY
+				case VK_END: *vch = bCtrl ? 135 : 35; break;	// END KEY
+				default: *vch = *buf = 0; break;
+				}
+			}
 		}
 	}
-	SetConsoleMode (h, mode);
 	if (buf[0] == 0 && *vch == 0) {
 		goto do_it_again;
 	}
+	SetConsoleMode (h, mode);
 	return buf[0];
 }
 #endif
@@ -794,16 +825,7 @@ R_API const char *r_line_readline_cb_win(RLineReadCallback cb, void *user) {
 		case 24:// ^X -- do nothing but store in prev = *buf
 			break;
 		case 25:// ^Y - paste
-			if (I.clipboard != NULL) {
-				I.buffer.length += strlen (I.clipboard);
-				// TODO: support endless strings
-				if (I.buffer.length < R_LINE_BUFSIZE) {
-					I.buffer.index = I.buffer.length;
-					strcat (I.buffer.data, I.clipboard);
-				} else {
-					I.buffer.length -= strlen (I.clipboard);
-				}
-			}
+			paste ();
 			break;
 		case 14:// ^n
 			if (gcomp) {
@@ -1168,16 +1190,7 @@ R_API const char *r_line_readline_cb(RLineReadCallback cb, void *user) {
 		case 24:// ^X -- do nothing but store in prev = *buf
 			break;
 		case 25:// ^Y - paste
-			if (I.clipboard != NULL) {
-				I.buffer.length += strlen (I.clipboard);
-				// TODO: support endless strings
-				if (I.buffer.length < R_LINE_BUFSIZE) {
-					I.buffer.index = I.buffer.length;
-					strcat (I.buffer.data, I.clipboard);
-				} else {
-					I.buffer.length -= strlen (I.clipboard);
-				}
-			}
+			paste ();
 			break;
 		case 14:// ^n
 			if (gcomp) {
@@ -1222,6 +1235,10 @@ R_API const char *r_line_readline_cb(RLineReadCallback cb, void *user) {
 				if (i < 0) {
 					I.buffer.index = 0;
 				}
+				break;
+			case 'D':
+			case 'd':
+				kill_word ();
 				break;
 			case 'F':
 			case 'f':
